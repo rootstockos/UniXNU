@@ -36,10 +36,16 @@ if [ -z "${UNIXNU_PATCH_LIST:-}" ]; then
 # The optional observation hooks overlap existing root/exec patch context.
 # Remove them first so earlier independent patches retain their idempotent checks.
 # The same holds for the boot-time GPU addon mount and the staged system apps copy (zzy), which edit the owner Data mount function
-# inside the systemos patch. Reverse newest first; the loop below re-applies them in name order.
-for LATE_PATCH in "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzyb-native-cryptex-os-view.patch" \
-    "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch" \
-    "$ROOT/patches/xnu/zzyc-owner-skip-launch-constraints.patch"; do
+# inside the systemos patch. The bring-up owner cache guard (zzzz), the video console patches (zzzzz to zzzzzzz, each on
+# the previous one's context) and the watchdog policy call (zzzzzzzz) sit on top of zzz-boot-progress. A kernel build
+# after the bootstrap pass meets them already applied. The board patches zzye and zzyf (the CPU idle helper, the AMP scheduler) add
+# lines inside earlier patches' context (zzyf: native-arm-pan's in BCM2837.h), so they are reversed too. Reverse newest first; the loop below re-applies them in name order.
+for LATE_PATCH in "$ROOT/patches/xnu/zzzzzzzz-watchdog-policy.patch" "$ROOT/patches/xnu/zzzzzzz-last-panic-print.patch" \
+    "$ROOT/patches/xnu/zzzzzz-video-console-text.patch" "$ROOT/patches/xnu/zzzzz-video-console-physical-fb.patch" \
+    "$ROOT/patches/xnu/zzzz-offline-owner-systemos-bringup.patch" "$ROOT/patches/xnu/zzz-boot-progress.patch" \
+    "$ROOT/patches/xnu/zzyf-board-amp.patch" "$ROOT/patches/xnu/zzye-board-cpu-idle.patch" "$ROOT/patches/xnu/zzyd-native-rtc-offset.patch" \
+    "$ROOT/patches/xnu/zzyc-owner-skip-launch-constraints.patch" "$ROOT/patches/xnu/zzyb-native-cryptex-os-view.patch" \
+    "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
   if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
   fi
@@ -74,6 +80,17 @@ fi
 BOOT_PROGRESS=${XNU_BOOT_PROGRESS:-0}
 if [ "$BOOT_PROGRESS" != 0 ] && [ "$BOOT_PROGRESS" != 1 ]; then
   echo 'XNU_BOOT_PROGRESS must be 0 or 1' >&2
+  exit 1
+fi
+# The launchd watchdog policy (sheng_boot_watchdog_policy: sheng-disable-watchdogd, sheng-lite, sheng-disable-jobs)
+# without the boot progress kit, from the device's build/watchdog-policy/libWatchdogPolicy.a (after Allenwdk/UniXNU-uke).
+WATCHDOG_POLICY=${XNU_WATCHDOG_POLICY:-0}
+if [ "$WATCHDOG_POLICY" != 0 ] && [ "$WATCHDOG_POLICY" != 1 ]; then
+  echo 'XNU_WATCHDOG_POLICY must be 0 or 1' >&2
+  exit 1
+fi
+if [ "$WATCHDOG_POLICY" = 1 ] && [ "$BOOT_PROGRESS" = 1 ]; then
+  echo 'XNU_WATCHDOG_POLICY duplicates the policy the boot progress kit already links' >&2
   exit 1
 fi
 if [ "$BOOT_PROGRESS" = 1 ]; then
@@ -761,6 +778,11 @@ PY_BINDINGS
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ROOT/build/boot-progress/libBootProgress.a"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ROOT/build/boot-progress/libBootProgress.a"
   fi
+  # Built by a device archive builder, so absent while the bootstrap pass links.
+  if [ "$WATCHDOG_POLICY" = 1 ] && [ -f "$ROOT/build/watchdog-policy/libWatchdogPolicy.a" ]; then
+    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ROOT/build/watchdog-policy/libWatchdogPolicy.a"
+    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ROOT/build/watchdog-policy/libWatchdogPolicy.a"
+  fi
   KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES ${XNU_EXTRA_LD_ARCHIVES:-}"
   EXTRA_MAKE_ARGS+=("LD_KERNEL_ARCHIVES=$KERNEL_EXTRA_ARCHIVES")
   EXTRA_MAKE_ARGS+=("XNU_EXTERNAL_KERNEL_ARCHIVES=$KERNEL_ARCHIVE_DEPENDENCIES")
@@ -803,6 +825,7 @@ if not stamp.exists() or stamp.read_text() != identity:
     stamp.write_text(identity)
 PY
 EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_BOOT_PROGRESS=$BOOT_PROGRESS"
+EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_WATCHDOG_POLICY=$WATCHDOG_POLICY"
 make -C .cache/xnu-work "${XNU_BUILD_TARGET:-build}" SDKROOT="${XNU_SDKROOT:-iphoneos}" ARCH_CONFIGS=ARM64 \
   MACHINE_CONFIGS=BCM2837 KERNEL_CONFIGS=DEVELOPMENT \
   ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG=arm64 LARGE_MEMORY_DEFINE=-UARM_LARGE_MEMORY \
