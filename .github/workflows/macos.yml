@@ -21,6 +21,7 @@ on:
         options:
           - kernel
           - kernel userdata
+          - kernel payload
           - kernel userdata payload
         default: kernel userdata
       ipsw_url:
@@ -180,16 +181,37 @@ jobs:
           if [ "$SKIP_SETUP" = "true" ]; then args+=(--skip-setup); fi
           ./unixnu build payload "${args[@]}"
 
-      - name: Upload kernel and payload
+      # The prelinked kernel and the payload contain binaries from the IPSW. When the repository has an
+      # ARTIFACT_PASSPHRASE secret, they are uploaded only as one AES-256 encrypted archive, so a public
+      # repository's artifacts don't redistribute them. Decrypt with:
+      #   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in unixnu-out.tar.gz.enc -pass file:KEYFILE | tar xz
+      - name: Check for the artifact passphrase
+        id: secret
+        env:
+          ARTIFACT_PASSPHRASE: ${{ secrets.ARTIFACT_PASSPHRASE }}
+        run: echo "present=$([ -n "$ARTIFACT_PASSPHRASE" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: Encrypt kernel and payload
+        if: steps.secret.outputs.present == 'true'
+        env:
+          ARTIFACT_PASSPHRASE: ${{ secrets.ARTIFACT_PASSPHRASE }}
+        run: |
+          mkdir -p encrypted
+          tar czf - out/*/kernel out/*/payload out/*/logs 2>/dev/null \
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:ARTIFACT_PASSPHRASE -out encrypted/unixnu-out.tar.gz.enc
+          ls -l encrypted
+      - name: Upload encrypted kernel and payload
+        if: steps.secret.outputs.present == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: unixnu-${{ inputs.defconfig }}
-          path: |
-            out/*/kernel/**
-            out/*/payload/**
-            out/*/logs/**
+          name: unixnu-${{ inputs.defconfig }}-encrypted
+          path: encrypted/unixnu-out.tar.gz.enc
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
+      - name: Refuse an unencrypted upload
+        if: steps.secret.outputs.present != 'true'
+        run: |
+          echo "No ARTIFACT_PASSPHRASE secret: not uploading IPSW-derived binaries unencrypted." >&2
+          exit 1
 
       - name: Upload userdata
         if: inputs.upload_userdata && contains(inputs.steps, 'userdata')
