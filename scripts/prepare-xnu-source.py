@@ -15,6 +15,15 @@ CACHE = Path(f'.cache/sources/xnu-driverkit-{TAG.removeprefix("xnu-")}.json')
 URL = f'https://api.github.com/repos/apple-oss-distributions/xnu/contents/iokit/DriverKit?ref={TAG}'
 
 
+def api(url):
+    """GitHub API request, with GITHUB_TOKEN when set: CI runners share addresses and hit the anonymous rate limit."""
+    request = urllib.request.Request(url)
+    token = os.environ.get('GITHUB_TOKEN')
+    if token:
+        request.add_header('Authorization', f'Bearer {token}')
+    return urllib.request.urlopen(request, timeout=30).read()
+
+
 def restore(entry, destination=DESTINATION, tag=TAG):
     if entry['type'] != 'file' or not entry['name'].endswith('.h'):
         return None
@@ -37,12 +46,12 @@ if __name__ == '__main__':
         raise SystemExit('Create the local XNU work source before preparing headers')
     if not CACHE.exists():
         CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_bytes(urllib.request.urlopen(URL, timeout=30).read())
+        CACHE.write_bytes(api(URL))
     entries = json.loads(CACHE.read_text())
     crypto_cache = CACHE.with_name(f'xnu-driverkit-crypto-{TAG.removeprefix("xnu-")}.json')
     if not crypto_cache.exists():
         crypto_url = URL.replace('/DriverKit?', '/DriverKit/crypto?')
-        crypto_cache.write_bytes(urllib.request.urlopen(crypto_url, timeout=30).read())
+        crypto_cache.write_bytes(api(crypto_url))
     for entry in json.loads(crypto_cache.read_text()):
         entry['relative'] = 'crypto/' + entry['name']
         entries.append(entry)
@@ -53,7 +62,7 @@ if __name__ == '__main__':
         if not trust_cache.exists():
             url = ('https://api.github.com/repos/apple-oss-distributions/xnu/'
                    f'contents/EXTERNAL_HEADERS/TrustCache?ref={trust_tag}')
-            trust_cache.write_bytes(urllib.request.urlopen(url, timeout=30).read())
+            trust_cache.write_bytes(api(url))
         trust_destination = Path('.cache/xnu-work/EXTERNAL_HEADERS/TrustCache')
         def restore_trust(entry):
             return restore(entry, trust_destination, trust_tag)
