@@ -200,6 +200,8 @@ The boot image step:
 
 The ramdisk is the payload output when it exists, `--ramdisk FILE`, or an empty ramdisk with `--ramdisk none`.
 
+With `[bootimg] payload_in_kernel = true` the ramdisk goes into the kernel image instead, and the boot image ramdisk stays empty. Bootloaders of devices launched with Android 13 or later load the ramdisk from `init_boot` and drop the boot image's own. The volume follows the firmware at a 4 KiB boundary, behind a 4 KiB header that starts with `UNIXNU PAYLOAD` (version, header size, volume size, CRC32). The ARM64 header's image size covers it. The device's firmware finds the header in the memory the bootloader loaded the kernel into.
+
 ## Local modules
 
 A module can come from a local directory. The first match wins:

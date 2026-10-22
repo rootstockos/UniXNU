@@ -80,6 +80,12 @@ A device repository has four configuration files: `board.toml`, `configs/<name>_
 | --- | --- | --- |
 | any | string | `-D NAME=VALUE` for the EDK II build |
 
+### [bootimg]
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `payload_in_kernel` | boolean | Carry the payload in the kernel image instead of the ramdisk, for bootloaders that load the ramdisk from `init_boot`. Default `false` |
+
 ### [bootimg.image]
 
 | Key | Type | Meaning |
