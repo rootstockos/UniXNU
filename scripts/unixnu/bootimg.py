@@ -1,5 +1,10 @@
 """Android boot image: gzip(BootShim + UEFI FD) with the device tree appended, plus an optional ramdisk.
 
+With board.toml [bootimg] payload_in_kernel = true the payload goes into the kernel image instead: bootloaders
+that load the ramdisk from init_boot (devices launched with Android 13 or later) drop a boot image ramdisk, but
+always load the whole kernel. The volume follows the firmware at a page boundary behind a PAYLOAD_MAGIC header,
+and the ARM64 header's image size covers it so the bootloader keeps that memory free.
+
 Inputs are a Mu-Silicium checkout (BootShim sources, Resources/Configs/<device>.toml, mkbootimg.py),
 the built firmware volume and a compiled device tree. The image is meant for "fastboot boot" only.
 The result is verified by unpacking it again; the output is deterministic.
@@ -17,6 +22,8 @@ from .config import load_toml
 from .util import Error, log, run, sha256_file, tool
 
 DEFAULTS = {'header_version': 0, 'base': 0, 'kernel_offset': 0x8000, 'tags_offset': 0x1e00000, 'pagesize': 4096}
+PAYLOAD_MAGIC = b'UNIXNU PAYLOAD\0\0'
+PAYLOAD_HEADER = 4096
 MKBOOTIMG_FLAGS = ('base', 'kernel_offset', 'tags_offset', 'pagesize', 'header_version', 'ramdisk_offset', 'second_offset', 'cmdline',
                    'os_version', 'os_patch_level')
 
@@ -38,6 +45,17 @@ def compile_shim(uefi, base, size, requires_header, scratch):
     if requires_header and (shim[56:60] != b'ARM\x64' or struct.unpack_from('<QQ', shim, 8) != (base, len(shim) + size)):
         raise Error('the ARM64 image header does not describe the shim plus the firmware volume')
     return shim
+
+
+def append_payload(combined, volume):
+    """Carry the payload volume in the kernel image (see the module docstring)."""
+    if len(volume) % 512:
+        raise Error('the payload volume is not a whole number of 512-byte sectors')
+    start = -(-len(combined) // PAYLOAD_HEADER) * PAYLOAD_HEADER
+    header = struct.pack('<16sIIQI', PAYLOAD_MAGIC, 1, PAYLOAD_HEADER, len(volume), zlib.crc32(volume))
+    image = bytearray(combined.ljust(start, b'\0') + header.ljust(PAYLOAD_HEADER, b'\0') + volume)
+    struct.pack_into('<Q', image, 16, -(-len(image) // PAYLOAD_HEADER) * PAYLOAD_HEADER)
+    return bytes(image)
 
 
 def patch_dtb(dtb, nodes, scratch):
@@ -94,6 +112,13 @@ def build(ctx, uefi, fd, dtb, ramdisk=None, output=None):
         if tree[:4] != b'\xd0\x0d\xfe\xed' or struct.unpack_from('>I', tree, 4)[0] != len(tree):
             raise Error('invalid compiled device tree')
         combined = shim + firmware
+        in_kernel = bool(ctx.board.get('bootimg', {}).get('payload_in_kernel', False))
+        if in_kernel and ramdisk:
+            if not requires_header:
+                raise Error('payload_in_kernel needs the ARM64 image header ([boot_shim] requires_kernel_header)')
+            combined = append_payload(combined, Path(ramdisk).read_bytes())
+            log(f'bootimg: payload in the kernel image at {len(shim) + len(firmware):#x}+, no ramdisk')
+            ramdisk = None
         kernel = gzip.compress(combined, mtime=0) + tree
         kernel_path = scratch / 'Image.gz-dtb'
         kernel_path.write_bytes(kernel)
@@ -110,7 +135,7 @@ def build(ctx, uefi, fd, dtb, ramdisk=None, output=None):
                 command += [f'--{key}', str(image[key])]
         run(command, capture=True)
         report = verify(out, combined, tree, ramdisk_path, image)
-    report.update(image_sha256=sha256_file(out), image_bytes=out.stat().st_size, fd_sha256=sha256_file(fd),
+    report.update(payload_in_kernel=in_kernel, kernel_bytes=len(combined), image_sha256=sha256_file(out), image_bytes=out.stat().st_size, fd_sha256=sha256_file(fd),
                   dtb_sha256=sha256_file(dtb), shim_bytes=len(shim), hardware_tested=False)
     (out.parent / 'boot.json').write_text(json.dumps(report, indent=2) + '\n')
     log(f'bootimg: {out} ({out.stat().st_size} bytes)')
