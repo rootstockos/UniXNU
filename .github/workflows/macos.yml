@@ -141,6 +141,8 @@ jobs:
         env:
           PRE_BUILD: ${{ inputs.pre_build }}
           DEVICE_DIR: ${{ github.workspace }}/device
+          # Pre-build steps may build a kernel too (a bootstrap pass), which reads the GitHub API.
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash -euo pipefail -c "$PRE_BUILD"
 
       - name: Build kernel
