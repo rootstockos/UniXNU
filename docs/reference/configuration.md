@@ -181,6 +181,7 @@ Types are `s` for string, `x` for hex cells, `i` for decimal cells, `u` for unsi
 | `chip_id` | string | Chip ID for the ADT |
 | `owned_memory_size` | string | Contiguous window request |
 | `root_match_volume_uuid` | string | Root volume UUID |
+| `boot_manifest_hash` | string | 96 hex characters for `/chosen/boot-manifest-hash`, passed to the ADT tool as `--boot-manifest-hash`. mount(8) phase 1 exits with 66 without it |
 | `cpu_regs` | string | CPU MPIDR values, comma separated |
 | `psci_method` | string | `smc` or `hvc` |
 | `packed_data_ramdisk` | boolean | Use the packed Data format |
