@@ -1,0 +1,12 @@
+{
+  "linux": {
+    "repository": "https://github.com/torvalds/linux.git",
+    "commit": "734bef548a96e8774d6eef5dfa2026c6edc4e80b",
+    "date": "2026-10-22T15:58:00-10:00",
+    "files": {
+      "drivers/gpu/drm/msm/adreno/a6xx_hfi.c": "3a545bcb6baf2505384b5cfd2e32464e5b8de04686af51d77a00917bb7d5343d",
+      "drivers/gpu/drm/msm/adreno/a6xx_hfi.h": "4b119ad717b0bf1e9d7914ea153f2a97f5078719cfa5d998eb6d5a018f0b9d21",
+      "drivers/gpu/drm/msm/adreno/a6xx_gmu.c": "6d7a4c3f75bec2043ac28e3d27632717f11d2156d3e91e05279d30ee6bdd5038"
+    }
+  }
+}
