@@ -351,7 +351,8 @@ jobs:
             echo "| payload | ${PAYLOAD:-skipped} |"
             echo
             echo "This workflow only checks that the build works. It publishes text logs (7 days) and no images."
-            xcodebuild -version | head -n 1
+            # Not "| head -n 1": with the runner's pipefail, xcodebuild's SIGPIPE fails the step and so the whole run.
+            xcodebuild -version | sed -n 1p
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save the XNU build tree
