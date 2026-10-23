@@ -197,6 +197,24 @@ jobs:
             fi
           fi
 
+      # Fork addition (rootstockos): keep XNU's patched open-source tree and its objects between runs, so a run
+      # recompiles only what changed (the build script's stamp files drop the objects an option change affects).
+      # Keyed by the XNU patches and build script: a run restores the newest cache with the same patches, a patch change
+      # starts over. Nothing derived from Apple binaries is cached (no IPSW, kernelcache, prelinked kernel or archives).
+      - name: Restore the XNU build tree
+        id: xnu-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            out/*/tree/.cache/xnu-work
+            out/*/tree/.cache/fakeroot
+            out/*/tree/.cache/sources
+            out/*/tree/build/xnu
+            out/*/tree/build/availability
+          key: xnu-tree-v1-${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-${{ github.run_id }}
+          restore-keys: |
+            xnu-tree-v1-${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-
+
       - name: Run pre-build steps
         if: inputs.pre_build != ''
         env:
@@ -335,6 +353,18 @@ jobs:
             echo "This workflow only checks that the build works. It publishes text logs (7 days) and no images."
             xcodebuild -version | head -n 1
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save the XNU build tree
+        if: always() && steps.xnu-cache.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            out/*/tree/.cache/xnu-work
+            out/*/tree/.cache/fakeroot
+            out/*/tree/.cache/sources
+            out/*/tree/build/xnu
+            out/*/tree/build/availability
+          key: xnu-tree-v1-${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-${{ github.run_id }}
 
       - name: Remove proprietary inputs
         if: always()
