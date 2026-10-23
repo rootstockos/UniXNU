@@ -284,6 +284,37 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # Fork addition (rootstockos): a device port needs the kernel it built. It leaves the runner only when the
+      # repository has an ARTIFACT_PASSPHRASE secret, as one AES-256 archive (PBKDF2, 200000 iterations) kept for one day,
+      # so a public repository never publishes it in the clear. Decrypt with:
+      #   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in unixnu-kernel.tar.gz.enc -pass file:KEYFILE | tar xz
+      - name: Encrypt the kernel
+        id: encrypt
+        if: steps.kernel.outcome == 'success'
+        env:
+          ARTIFACT_PASSPHRASE: ${{ secrets.ARTIFACT_PASSPHRASE }}
+          BOARD: ${{ steps.check.outputs.board }}
+        run: |
+          if [ -z "$ARTIFACT_PASSPHRASE" ]; then
+            echo "No ARTIFACT_PASSPHRASE secret: the kernel is not uploaded."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/encrypted"
+          tar -czf - "out/$BOARD/kernel" \
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:ARTIFACT_PASSPHRASE \
+              -out "$RUNNER_TEMP/encrypted/unixnu-kernel.tar.gz.enc"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the encrypted kernel
+        if: steps.encrypt.outputs.present == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unixnu-${{ steps.check.outputs.board }}-kernel-encrypted
+          path: ${{ runner.temp }}/encrypted/unixnu-kernel.tar.gz.enc
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Summary
         if: always()
         env:
