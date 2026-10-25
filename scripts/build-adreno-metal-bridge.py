@@ -27,7 +27,9 @@ PATCHES = [ROOT / 'drivers/AdrenoMetal/bridge/patches' / name for name in [
     '0001-optional-constant-output-members.patch', '0002-resource-wait-storage-dependencies.patch',
     '0003-cache-device-entry-point-priming.patch', '0004-fold-constant-global-field-loads.patch',
     '0005-keep-module-decodes-and-profile-fingerprints.patch', '0006-skip-draws-without-a-pipeline.patch',
-    '0007-accept-two-plane-rgb-surfaces.patch', '0008-alias-padded-rows-of-written-textures.patch']]
+    # 0008-alias-padded-rows-of-written-textures.patch was listed here too, but it is only on AdrenoMetal's unmerged branch
+    # feat/prime-idle-bar (2aa5625), together with the NativeMetalObjects.rs line that selects it; the pinned main (454ff2c) has neither.
+    '0007-accept-two-plane-rgb-surfaces.patch']]
 tree_diff = subprocess.check_output(['git', '-C', str(SOURCE), 'diff', 'HEAD', '--'], text=True)
 def canonical_diff(diff):
     # Independent patches touch disjoint files; Git orders the combined diff by
