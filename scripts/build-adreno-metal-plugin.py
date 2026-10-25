@@ -5,6 +5,7 @@ and the launchd probe daemon with its job plist (NativeAdrenoProbeDaemon.cpp).
 Output (ignored, never committed): build/adreno-metal-plugin/NativeAdrenoMetal.bundle with a 4 KiB-page ad-hoc signature, and
 trust.json with its CDHash. The bundle is staged into the Data seed by add-gpu-plugin-data.py and trusted through an extra
 owner trust module (make-owner-trust-bundle.py); neither changes the original trust modules, AMFI or any Apple signature."""
+import argparse
 import json
 import plistlib
 import re
@@ -13,6 +14,15 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--abi-dir', type=Path, default=ROOT / 'drivers/Adreno740',
+                    help="Directory with the kernel driver's NativeAdrenoABI.h (a board with its own driver fork passes its copy, as for "
+                         "build-turnip-darwin.py). The Turnip replay is recorded on the A740 host simulation, so it is left out for another ABI.")
+args = parser.parse_args()
+ABI = args.abi_dir.resolve()
+if not (ABI / 'NativeAdrenoABI.h').is_file():
+    raise SystemExit(f'{ABI} has no NativeAdrenoABI.h')
+OWN_ABI = ABI == (ROOT / 'drivers/Adreno740').resolve()
 OUT = ROOT / 'build/adreno-metal-plugin'
 bundle = OUT / 'NativeAdrenoMetal.bundle'
 if OUT.exists():
@@ -27,7 +37,11 @@ if not TURNIP.is_file():
     raise SystemExit('Build Turnip first: python3 scripts/build-turnip-darwin.py --target ios')
 subprocess.run(['python3', ROOT / 'scripts/gen-turnip-smoke-shaders.py'], check=True)
 # Turnip's first submission, recorded on the host, for the plugin's prefix replay (build/turnip-smoke/TurnipReplay.h).
-subprocess.run(['python3', ROOT / 'scripts/gen-turnip-replay.py'], check=True)
+REPLAY = ROOT / 'build/turnip-smoke/TurnipReplay.h'
+if OWN_ABI:
+    subprocess.run(['python3', ROOT / 'scripts/gen-turnip-replay.py'], check=True)
+else:
+    REPLAY.unlink(missing_ok=True)   # NativeAdrenoUserTest.h includes it only when present
 subprocess.run(['python3', ROOT / 'scripts/build-adreno-metal-bridge.py', '--target', 'ios'], check=True)
 BRIDGE = ROOT / 'build/adreno-metal-bridge/ios/libadreno_metal_bridge.a'
 pm4 = OUT / 'AdrenoPM4.o'
@@ -38,7 +52,7 @@ exe = bundle / 'NativeAdrenoMetal'
 PRIME_LIST = ROOT / 'build/prime-list.txt'
 prime_section = [f'-Wl,-sectcreate,__DATA,__primelist,{PRIME_LIST}'] if PRIME_LIST.is_file() else []
 subprocess.run([*(['xcrun', 'clang++'] + base[2:]), '-std=c++17', '-fobjc-arc', '-Wno-deprecated-declarations', '-bundle',
-                '-I', ROOT / 'drivers/Adreno740', '-I', ROOT / 'kits/AdrenoPM4', '-I', VULKAN_INCLUDE, '-I', ROOT / 'build/turnip-smoke',
+                '-I', ABI, '-I', ROOT / 'kits/AdrenoPM4', '-I', VULKAN_INCLUDE, '-I', ROOT / 'build/turnip-smoke',
                 '-x', 'objective-c++', ROOT / 'drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm',
                 ROOT / 'drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm', '-x', 'none', pm4, BRIDGE,
                 '-Wl,-dead_strip', *prime_section, '-lobjc', '-framework', 'Foundation', '-framework', 'Metal', '-framework', 'IOSurface', '-o', exe],
@@ -81,7 +95,7 @@ entitlements.write_bytes(plistlib.dumps({'com.apple.private.security.no-containe
                                          'com.apple.private.logging.admin': True, 'com.apple.private.logging.diagnostic': True,
                                          'com.apple.private.logging.stream': True}))
 daemon = OUT / 'adrenoprobed'
-subprocess.run(['xcrun', 'clang++', *base[2:], '-std=c++17', '-I', ROOT / 'drivers/Adreno740', '-I', ROOT / 'kits/AdrenoPM4', '-I', VULKAN_INCLUDE,
+subprocess.run(['xcrun', 'clang++', *base[2:], '-std=c++17', '-I', ABI, '-I', ROOT / 'kits/AdrenoPM4', '-I', VULKAN_INCLUDE,
                 '-I', ROOT / 'build/turnip-smoke',
                 ROOT / 'drivers/AdrenoMetal/NativeAdrenoProbeDaemon.cpp', '-x', 'objective-c++', '-fobjc-arc',
                 ROOT / 'drivers/AdrenoMetal/NativeOsLogExport.mm', '-x', 'none', pm4, '-framework', 'Foundation', '-lz', '-o', daemon], check=True)

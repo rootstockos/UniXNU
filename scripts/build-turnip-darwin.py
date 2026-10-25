@@ -19,6 +19,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--target', choices=('host', 'ios'), default='host')
 parser.add_argument('--configure-only', action='store_true')
 parser.add_argument('--builtin-pack', type=Path, help='Embed an exact-source/profile/GPU-bound own builtin pack; no runtime compiler fallback')
+parser.add_argument('--abi-dir', type=Path, default=ROOT / 'drivers/Adreno740',
+                    help='Directory with the kernel driver\'s NativeAdrenoABI.h (a board with its own driver fork passes its copy)')
 args = parser.parse_args()
 SOURCE = ROOT / '.cache/mesa-work'
 OUT = ROOT / ('build/mesa-tu' if args.target == 'host' else 'build/mesa-tu-ios')
@@ -39,7 +41,7 @@ if not shutil.which('glslangValidator'):
 env = {k: v for k, v in os.environ.items() if not k.startswith(('IR3_', 'FD_MESA_', 'NIR_', 'MESA_SHADER_', 'TU_'))}
 env['PATH'] = str(ROOT / '.cache/mesa-tools/bin') + ':' + str(ROOT / '.cache/mesa-venv/bin') + ':' + env['PATH']
 options = ['-Dgallium-drivers=', '-Dvulkan-drivers=freedreno', '-Dfreedreno-kmds=darwin',
-           '-Dtu-darwin-abi-dir=' + str(ROOT / 'drivers/Adreno740'), '-Dplatforms=macos', '-Dglx=disabled',
+           '-Dtu-darwin-abi-dir=' + str(args.abi_dir.resolve()), '-Dplatforms=macos', '-Dglx=disabled',
            '-Degl=disabled', '-Dgbm=disabled', '-Dopengl=false', '-Dgles1=disabled', '-Dgles2=disabled',
            '-Dllvm=disabled', '-Dshared-glapi=disabled', '-Dxmlconfig=disabled', '-Dshader-cache=disabled',
            '-Dtools=', '-Dbuild-tests=false', '-Dvideo-codecs=', '-Dvulkan-layers=']
