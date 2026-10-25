@@ -2,7 +2,40 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 index a5ff474..4704203 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -7193,6 +7193,321 @@ uint64_t native_owner_data_seed_base, native_owner_data_seed_size;
+@@ -2205,6 +2205,13 @@ struct execsw {
+  *	<ex_imgact>:???			[anything an imgact can return]
+  *	EDEADLK				Process is being terminated
+  */
++/* GPU addon test hook (patches/xnu/zzy-native-gpu-addon-mount.patch): a board's boot policy may set this before launchd starts, to run
++ * an owner test program from /private/var/ngpu in place of the program of an existing launchd job. launchd takes its jobs from its own
++ * compiled list rather than from the LaunchDaemons union, so a job plist alone does not start an owner program. The function returns NULL
++ * to leave a path alone. Only the path changes: argv, environment and the job's attributes stay launchd's, and the substitute still has
++ * to pass AMFI through the loaded trust cache. Unset (the default), exec is unchanged. */
++const char *(*native_gpu_addon_exec_substitute)(const char *path);
++
+ static int
+ exec_activate_image(struct image_params *imgp)
+ {
+@@ -2235,6 +2242,18 @@ exec_activate_image(struct image_params *imgp)
+ 		goto bad_notrans;
+ 	}
+ 
++	if (native_gpu_addon_exec_substitute != NULL) {
++		const char *substitute = native_gpu_addon_exec_substitute(excpath);
++		if (substitute != NULL) {
++			/* Nothing else is in the string area yet: save the substitute as the path instead. */
++			exec_reset_save_path(imgp);
++			error = exec_save_path(imgp, CAST_USER_ADDR_T(substitute), UIO_SYSSPACE, &excpath);
++			if (error) {
++				goto bad_notrans;
++			}
++		}
++	}
++
+ 	/* Use excpath, which contains the copyin-ed exec path */
+ 	DTRACE_PROC1(exec, uintptr_t, excpath);
+ 
+@@ -7196,6 +7215,321 @@ uint64_t native_owner_data_seed_base, native_owner_data_seed_size;
  uint8_t native_owner_data_seed_sha256[32];
  char native_owner_data_device_path[64];
  
@@ -324,7 +357,7 @@ index a5ff474..4704203 100644
  static int
  native_owner_data_prepare(proc_t p, user_addr_t scratch)
  {
-@@ -7251,6 +7566,7 @@ native_owner_data_prepare(proc_t p, user_addr_t scratch)
+@@ -7254,6 +7588,7 @@ native_owner_data_prepare(proc_t p, user_addr_t scratch)
  	if (actual != device || (vfs_flags(data_mount) & MNT_RDONLY) ||
  	    strcmp(vfs_statfs(data_mount)->f_fstypename, "apfs")) error = EINVAL;
  	if (!error) native_owner_data_stage = 4;

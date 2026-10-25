@@ -65,7 +65,7 @@
 | 补丁 | 作用 |
 | --- | --- |
 | `offline-native-gpu-broker` | 启动离线 GPU broker |
-| `zzy-native-gpu-addon-mount` | 为 GPU addon 内容和启动任务挂载只读 union 视图 |
+| `zzy-native-gpu-addon-mount` | 为 GPU addon 内容和启动任务挂载只读 union 视图；提供一个 exec 钩子，板级策略可用它让已有任务改为运行 addon 程序 |
 | `zzw-native-adreno-sandbox-grant` | 让 Adreno740 在 `NativeSandboxGrantProcess` 中指定 render server，并使其 user client 通过沙箱打开 |
 | `native-aes-personality` | 注册存储和控制台 personality |
 

@@ -63,7 +63,7 @@ Format 2 applies `[kernel] patch_series` in declared order. Series can reference
 | Patch | Purpose |
 | --- | --- |
 | `offline-native-gpu-broker` | Starts the offline GPU broker |
-| `zzy-native-gpu-addon-mount` | Mounts read-only union views for GPU addon content and launch jobs |
+| `zzy-native-gpu-addon-mount` | Mounts read-only union views for GPU addon content and launch jobs; an exec hook a board policy can set to run an addon program in place of an existing job's program |
 | `zzw-native-adreno-sandbox-grant` | Lets Adreno740 name the render server in `NativeSandboxGrantProcess` and open its user client past the sandbox |
 | `native-aes-personality` | Registers the storage and console personalities |
 
