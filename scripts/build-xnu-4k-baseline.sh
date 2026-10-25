@@ -94,9 +94,11 @@ if [ "$WATCHDOG_POLICY" = 1 ] && [ "$BOOT_PROGRESS" = 1 ]; then
   exit 1
 fi
 if [ "$BOOT_PROGRESS" = 1 ]; then
-  if [ "${XNU_NATIVE_UFS:-0}" != 1 ] || [ "${XNU_OWNER_ROOT_AUDIT:-0}" != 1 ] || \
-     [ "${XNU_NATIVE_VIRTIO_BLOCK:-0}" != 1 ] || [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
-    echo 'Boot progress requires the audited UFS/owner-root, Virtio and source-corecrypto build' >&2
+  # The kit reads the UFS counters and needs the source corecrypto build. The owner-root audit and Virtio block
+  # only feed status words on its page (native_owner_root_accepted, native_virtio_*): a board without them links
+  # its own zero values from the device's build-boot-progress.py.
+  if [ "${XNU_NATIVE_UFS:-0}" != 1 ] || [ "${XNU_SOURCE_CORECRYPTO14:-0}" != 1 ]; then
+    echo 'Boot progress requires the UFS and source-corecrypto build' >&2
     exit 1
   fi
   python3 scripts/build-boot-progress.py
