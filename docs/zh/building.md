@@ -9,7 +9,7 @@
 ## 1. 准备主机和仓库 {#quick-start}
 
 阅读[前置条件](/zh/guide/requirements)，从[设备列表](/zh/devices/)选择移植。
-新设备先按[移植流程](/zh/porting/)操作。获取设备和 UEFI 仓库及其 submodule。
+新设备先按[移植流程](/zh/porting/steps)操作。获取设备和 UEFI 仓库及其 submodule。
 例如 sheng 使用：
 
 ```sh
@@ -106,7 +106,7 @@ cp unixnu.example.toml unixnu.local.toml
 
 CI 使用共享解析器读取最终配置和输出路径。
 
-内核、userdata 和 Data 种子步骤调用 Xcode、`hdiutil` 和 `diskutil`。fork 后可以在 GitHub 的 macOS runner 上运行这些步骤，不需要本地 Mac。workflow 是构建检查：只发布脱敏文本日志，不上传镜像。
+内核步骤在 macOS 上调用 Xcode，Data 种子步骤调用 `hdiutil` 和 `diskutil`。fork 后可以在 GitHub 的 macOS runner 上运行这些步骤，不需要本地 Mac。workflow 是构建检查：只发布脱敏文本日志，不上传镜像。
 
 1. fork 仓库并启用 Actions。
 2. 板级需要为负载提供平台种子时，添加仓库 secret `UNIXNU_UNIQUE_CHIP_ID`。
@@ -288,7 +288,7 @@ package 步骤用 EDK II 构建 `package/`，输出到 `out/<device>/<os_profile
 
 ### userdata
 
-userdata 步骤构建 `userdata` 分区的原始镜像，保存 IPSW 中未修改的 `OS` 和 `SystemOS` 磁盘镜像，前置 `SHNGROOT` manifest。磁盘镜像用 `hdiutil` 只读挂载。输出为 `out/<device>/<os_profile>/<config>/userdata/userdata-root.img` 和 `userdata-root.json`，报告会打印 `fastboot flash userdata` 命令。
+userdata 步骤构建 `userdata` 分区的原始镜像，保存 IPSW 中未修改的 `OS` 和 `SystemOS` 磁盘镜像，前置 `SHNGROOT` manifest。macOS 上磁盘镜像用 `hdiutil` 只读挂载；Linux 上由 `scripts/unixnu/udif.py` 解码，LZFSE 块用 `lzfse` 解压。两者得到相同的字节。输出为 `out/<device>/<os_profile>/<config>/userdata/userdata-root.img` 和 `userdata-root.json`，报告会打印 `fastboot flash userdata` 命令。
 
 ### bootimg
 

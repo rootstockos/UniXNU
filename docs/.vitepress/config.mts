@@ -30,7 +30,8 @@ function taskSidebars(prefix: string, zh: boolean) {
   ]
   const port = [
     group('1. Prepare the port', '1. 准备移植', [
-      item('Port a device', '移植设备', 'porting/'),
+      item('Welcome', '欢迎', 'porting/'),
+      item('Port a device', '移植设备', 'porting/steps'),
       item('Migrate a repository', '迁移已有仓库', 'porting/migration'),
       item('Device repository', '设备仓库', 'porting/device-repository'),
       item('Component selection', '选择组件', 'reference/components'),

@@ -56,7 +56,9 @@ For Qualcomm AudioReach/GPR firmware, use these references in execution order:
 
 | Source | Purpose |
 | --- | --- |
-| [ShengGpr.h](https://github.com/UniXNU/UniXNU-sheng/blob/516a780473a2ac59c8b438e132bb60204dda9e22/package/ShengGpr.h#L24), [AudioProbe.cpp](https://github.com/UniXNU/UniXNU-sheng/blob/516a780473a2ac59c8b438e132bb60204dda9e22/package/AudioProbe.cpp#L148) | Packet headers, tokens, APM readiness query, response timeout and retry |
+| [ShengGpr.h](https://github.com/UniXNU/UniXNU-sheng/blob/552b67499135bae191f415f444d782a6942c252e/package/ShengGpr.h), [ShengAudioReach.h](https://github.com/UniXNU/UniXNU-sheng/blob/552b67499135bae191f415f444d782a6942c252e/package/ShengAudioReach.h) | Packet headers, APM readiness, graph open and configuration, memory map, PRM votes and clocks |
+| [AudioProbe.cpp](https://github.com/UniXNU/UniXNU-sheng/blob/552b67499135bae191f415f444d782a6942c252e/package/AudioProbe.cpp), [ShengCs35l43.c](https://github.com/UniXNU/UniXNU-sheng/blob/552b67499135bae191f415f444d782a6942c252e/package/ShengCs35l43.c) | Amplifier setup over I2C, graph bring-up, period buffer flow, codec SoundWire start, microphone capture |
+| [ShengAudioService.cpp](https://github.com/UniXNU/UniXNU-sheng/blob/552b67499135bae191f415f444d782a6942c252e/package/ShengAudioService.cpp), [ShengAudioPlugIn.c](https://github.com/UniXNU/UniXNU-sheng/blob/552b67499135bae191f415f444d782a6942c252e/hal/ShengAudioPlugIn.c) | Audio service for the OS audio server and its plug-in |
 | [Linux q6apm.h](https://github.com/torvalds/linux/blob/v6.12/sound/soc/qcom/qdsp6/q6apm.h), [q6apm.c](https://github.com/torvalds/linux/blob/v6.12/sound/soc/qcom/qdsp6/q6apm.c) | Graph lifecycle, memory mapping and read/write requests |
 | [Linux audioreach.c](https://github.com/torvalds/linux/blob/v6.12/sound/soc/qcom/qdsp6/audioreach.c), [topology.c](https://github.com/torvalds/linux/blob/v6.12/sound/soc/qcom/qdsp6/topology.c) | Module configuration, graph connections, media formats and endpoint parameters |
 | [Linux q6apm-dai.c](https://github.com/torvalds/linux/blob/v6.12/sound/soc/qcom/qdsp6/q6apm-dai.c) | `q6apm_dai_prepare`, stream events and period-buffer flow |
@@ -92,6 +94,14 @@ interfaces, and retain the applicable source licenses when reusing code.
    channel order, rate, position and buffer contents. Repeat start/stop and test
    buffer starvation, timeout and DSP restart. Verify OS application playback
    or recording after the direct stream path succeeds.
+
+On SM8550 these firmware details decide whether a route starts:
+
+- The DSP takes a buffer as a 32-bit address with the stream index (`0x1001 & 0xf`) in the upper word. Place the period buffer below 4 GiB.
+- The DSP offers small GLINK intents first and grants a larger one on request. Keep the granted intent even when the remote intent table is full.
+- PRM requests use the PRM's own port and PRM clock IDs; the TX core clock is `0x30c`, not the device tree index.
+- The VA macro gates the TX SoundWire master clock as well as the TX macro.
+- The primary microphone runs AMIC3 on micbias 3 into ADC2, codec data port 1 channel 2, master port 2, TX decimator 0 and codec DMA TX3.
 
 **Result:** a complete route carries PCM data, reports progress and releases its
 resources. Save the route description, format, stream counters and captured
@@ -139,9 +149,10 @@ protocol, limits and thermal policy.
 
 ## 5. Implement frequency and power operations {#power}
 
-Read [CpuFreqProbe.cpp](https://github.com/UniXNU/UniXNU-sheng/blob/516a780473a2ac59c8b438e132bb60204dda9e22/package/CpuFreqProbe.cpp) for EPSS LUT and CPU/L3 operating-point access, [QcomRpmh.h](https://github.com/UniXNU/UniXNU-sheng/blob/516a780473a2ac59c8b438e132bb60204dda9e22/package/QcomRpmh.h) for resource
+Read [CpuFreqProbe.cpp](https://github.com/UniXNU/UniXNU-sheng/blob/552b67499135bae191f415f444d782a6942c252e/package/CpuFreqProbe.cpp) for EPSS LUT and CPU/L3 operating-point access, [QcomRpmh.h](https://github.com/UniXNU/UniXNU-sheng/blob/516a780473a2ac59c8b438e132bb60204dda9e22/package/QcomRpmh.h) for resource
 votes, and [ShengPlatformPower.cpp](https://github.com/UniXNU/UniXNU-sheng/blob/516a780473a2ac59c8b438e132bb60204dda9e22/package/ShengPlatformPower.cpp) for the OS-facing platform-power integration.
 These are references for the corresponding Qualcomm hardware interfaces.
+[GpuPowerProbe.cpp](https://github.com/UniXNU/UniXNU-sheng/blob/552b67499135bae191f415f444d782a6942c252e/package/GpuPowerProbe.cpp) holds the GPU clock governor.
 
 1. Match CPU affinities to performance domains. Read the target's LUT entries,
    reference clocks and enabled state; convert entries into rates using that
@@ -154,6 +165,11 @@ These are references for the corresponding Qualcomm hardware interfaces.
    state, restore clocks and mappings, rearm interrupts and resume consumers.
 5. Measure frequency under load, then verify each peripheral transition and
    resume path with its dependent drivers active.
+
+On SM8550 the governors use these inputs:
+
+- CPU: each CPU's idle time from the scheduler, read every 16 ms. A domain follows its busiest CPU with a 1.25 margin and steps down after four quieter windows.
+- GPU: the GMU XO busy counter. The level that keeps the GPU about half busy is voted over HFI together with that level's bandwidth.
 
 **Result:** frequency requests and power transitions have observed effects and
 preserve the dependent devices' operation.
