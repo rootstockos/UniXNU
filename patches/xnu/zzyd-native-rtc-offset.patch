@@ -1,7 +1,7 @@
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -7995,6 +7995,91 @@ native_staged_apps_prepare(proc_t p, user_addr_t scratch, mount_t data_mount)
+@@ -7995,6 +7995,92 @@ native_staged_apps_prepare(proc_t p, user_addr_t scratch, mount_t data_mount)
  	vnode_put(vp);
  }
  
@@ -13,6 +13,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
 +/* [0] restore: -1 not run, 0 applied, 1 nothing to apply, ENOENT none saved, other errno; [1] stores; [2] the last store's errno */
 +volatile int32_t native_rtc_offset_status[3] = {-1};
 +/* The platform expert's side. A static kernel link needs a definition; a platform without an RTC offset keeps this one. */
++int armdt_rtc_restore(int found, int64_t offset, clock_sec_t *wall);
 +__attribute__((weak)) int
 +armdt_rtc_restore(__unused int found, __unused int64_t offset, clock_sec_t *wall)
 +{
@@ -93,7 +94,7 @@ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
  static int
  native_owner_data_prepare(proc_t p, user_addr_t scratch)
  {
-@@ -8055,6 +8140,7 @@ native_owner_data_prepare(proc_t p, user_addr_t scratch)
+@@ -8055,6 +8141,7 @@ native_owner_data_prepare(proc_t p, user_addr_t scratch)
  	if (!error) native_owner_data_stage = 4;
  	if (!error) native_gpu_addon_prepare(p, scratch);
  	if (!error) native_staged_apps_prepare(p, scratch, data_mount);

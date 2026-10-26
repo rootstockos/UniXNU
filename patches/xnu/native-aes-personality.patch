@@ -49,7 +49,6 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 +    "     'IOProbeScore'    = 500:32;"
 +    "   }"
 +#endif
-+#endif
 +#if defined(XNU_QCOM_PMIC_RTC) && XNU_QCOM_PMIC_RTC
 +    "   ,{"
 +    "     'IOClass'         = QcomPmicRtc;"
@@ -66,4 +65,5 @@ diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
 +    "     'IONameMatch'     = 'arm,pl031';"
 +    "     'IOProbeScore'    = 1000:32;"
 +    "   }"
++#endif
      ")";
