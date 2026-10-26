@@ -331,7 +331,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/encrypted" "$RUNNER_TEMP/kernel/out/$BOARD"
           # Format 1 builds in out/<board>/kernel, format 2 in out/<board>/<os_profile>/<config>/kernel; the archive always
           # holds out/<board>/kernel.
-          kernel=$(ls out/"$BOARD"/kernel/kernel.macho out/"$BOARD"/*/*/kernel/kernel.macho 2>/dev/null | head -1)
+          kernel=
+          for candidate in out/"$BOARD"/kernel/kernel.macho out/"$BOARD"/*/*/kernel/kernel.macho; do
+            if [ -f "$candidate" ]; then kernel=$candidate; break; fi
+          done
+          if [ -z "$kernel" ]; then echo "No kernel.macho under out/$BOARD"; exit 1; fi
           cp -a "$(dirname "$kernel")" "$RUNNER_TEMP/kernel/out/$BOARD/kernel"
           tar -C "$RUNNER_TEMP/kernel" -czf - "out/$BOARD/kernel" \
             | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:ARTIFACT_PASSPHRASE \
