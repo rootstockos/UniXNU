@@ -94,6 +94,8 @@ python3 scripts/porting-record.py check --device ../UniXNU-sheng --base origin/m
 
 设备模板包含 `.github/workflows/porting-record.yml`。官方设备分支要求其
 `Porting record` 检查通过。审阅者确认硬件事实、证据质量、组件复用和完成等级。
+基于 UniXNU 分支（fork）构建的设备向工作流传入 `tools_repository` 和 `tools_ref`，
+以该分支的组件目录检查记录。
 
 ## 发布与复用 {#publishing-and-reuse}
 

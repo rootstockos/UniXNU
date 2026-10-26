@@ -101,6 +101,8 @@ documentation review workflow. `porting.toml` is the authoritative device record
 The device template includes `.github/workflows/porting-record.yml`. Official
 device branches require its `Porting record` check. Reviewers verify hardware
 facts, evidence quality, component reuse and the stated completion level.
+A device built on a fork of UniXNU passes `tools_repository` and `tools_ref`
+to the workflow, so the record is checked against that fork's catalog.
 
 ## Publishing and reuse {#publishing-and-reuse}
 

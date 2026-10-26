@@ -2,6 +2,14 @@ name: Porting record
 
 on:
   workflow_call:
+    inputs:
+      # A device built on a fork of UniXNU checks its record against that fork's catalog (its own components).
+      tools_repository:
+        type: string
+        default: UniXNU/UniXNU
+      tools_ref:
+        type: string
+        default: main
 
 permissions:
   contents: read
@@ -17,8 +25,8 @@ jobs:
           fetch-depth: 0
       - uses: actions/checkout@v4
         with:
-          repository: UniXNU/UniXNU
-          ref: main
+          repository: ${{ inputs.tools_repository }}
+          ref: ${{ inputs.tools_ref }}
           path: tools
       - uses: actions/setup-python@v5
         with:
