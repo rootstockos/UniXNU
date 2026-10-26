@@ -41,8 +41,9 @@ if [ -z "${UNIXNU_PATCH_LIST:-}" ]; then
 # after the bootstrap pass meets them already applied. Reverse newest first; the loop below re-applies them in name order.
 for LATE_PATCH in "$ROOT/patches/xnu/zzzzzzzz-watchdog-policy.patch" "$ROOT/patches/xnu/zzzzzzz-last-panic-print.patch" \
     "$ROOT/patches/xnu/zzzzzz-video-console-text.patch" "$ROOT/patches/xnu/zzzzz-video-console-physical-fb.patch" \
-    "$ROOT/patches/xnu/zzzz-offline-owner-systemos-bringup.patch" "$ROOT/patches/xnu/zzz-boot-progress.patch" "$ROOT/patches/xnu/zzy-staged-system-apps.patch" \
-    "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
+    "$ROOT/patches/xnu/zzzz-offline-owner-systemos-bringup.patch" "$ROOT/patches/xnu/zzz-boot-progress.patch" \
+    "$ROOT/patches/xnu/zzyc-owner-skip-launch-constraints.patch" "$ROOT/patches/xnu/zzyb-native-cryptex-os-view.patch" \
+    "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
   if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
   fi
