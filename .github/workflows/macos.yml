@@ -24,6 +24,13 @@ on:
           - kernel userdata
           - kernel userdata payload
         default: kernel
+      runner:
+        description: Hosted runner (macos-26 is arm64; macos-26-intel is x64, the same image line and Xcode, for when the arm64 pool has no capacity)
+        type: choice
+        options:
+          - macos-26
+          - macos-26-intel
+        default: macos-26
       xcode:
         description: Xcode version of the macos-26 image (/Applications/Xcode_<version>.app)
         required: true
@@ -79,7 +86,9 @@ jobs:
   build:
     # Pinned: macos-latest moves between images (macos-15 had an Xcode whose clang rejects the warning options the
     # build passes with -Werror). macos-26 is arm64 and carries the Xcode 26 line the build is developed with.
-    runs-on: macos-26
+    # Fork addition (rootstockos): macos-26-intel when GitHub cannot acquire an arm64 runner (2026-10-26: every attempt
+    # cancelled after 15 min with "not acquired by Runner of type hosted", a capacity shortage).
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 360
     env:
       DEVELOPER_DIR: /Applications/Xcode_${{ inputs.xcode }}.app/Contents/Developer
