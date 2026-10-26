@@ -210,10 +210,16 @@ jobs:
         with:
           path: |
             out/*/tree/.cache/xnu-work
+            out/*/*/*/tree/.cache/xnu-work
             out/*/tree/.cache/fakeroot
+            out/*/*/*/tree/.cache/fakeroot
             out/*/tree/.cache/sources
+            out/*/*/*/tree/.cache/sources
             out/*/tree/build/xnu
+            out/*/*/*/tree/build/xnu
             out/*/tree/build/availability
+            out/*/*/*/tree/build/availability
+            out/*/*/*/xnu-inputs.json
           key: xnu-tree-v1-${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-${{ github.run_id }}
           restore-keys: |
             xnu-tree-v1-${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-
@@ -322,8 +328,12 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          mkdir -p "$RUNNER_TEMP/encrypted"
-          tar -czf - "out/$BOARD/kernel" \
+          mkdir -p "$RUNNER_TEMP/encrypted" "$RUNNER_TEMP/kernel/out/$BOARD"
+          # Format 1 builds in out/<board>/kernel, format 2 in out/<board>/<os_profile>/<config>/kernel; the archive always
+          # holds out/<board>/kernel.
+          kernel=$(ls out/"$BOARD"/kernel/kernel.macho out/"$BOARD"/*/*/kernel/kernel.macho 2>/dev/null | head -1)
+          cp -a "$(dirname "$kernel")" "$RUNNER_TEMP/kernel/out/$BOARD/kernel"
+          tar -C "$RUNNER_TEMP/kernel" -czf - "out/$BOARD/kernel" \
             | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:ARTIFACT_PASSPHRASE \
               -out "$RUNNER_TEMP/encrypted/unixnu-kernel.tar.gz.enc"
           echo "present=true" >> "$GITHUB_OUTPUT"
@@ -365,10 +375,16 @@ jobs:
         with:
           path: |
             out/*/tree/.cache/xnu-work
+            out/*/*/*/tree/.cache/xnu-work
             out/*/tree/.cache/fakeroot
+            out/*/*/*/tree/.cache/fakeroot
             out/*/tree/.cache/sources
+            out/*/*/*/tree/.cache/sources
             out/*/tree/build/xnu
+            out/*/*/*/tree/build/xnu
             out/*/tree/build/availability
+            out/*/*/*/tree/build/availability
+            out/*/*/*/xnu-inputs.json
           key: xnu-tree-v1-${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-${{ github.run_id }}
 
       - name: Remove proprietary inputs
