@@ -46,6 +46,8 @@ for LATE_PATCH in "$ROOT/patches/xnu/zzzzzzzz-watchdog-policy.patch" "$ROOT/patc
     "$ROOT/patches/xnu/zzyf-board-amp.patch" "$ROOT/patches/xnu/zzye-board-cpu-idle.patch" "$ROOT/patches/xnu/zzyd-native-rtc-offset.patch" \
     "$ROOT/patches/xnu/zzyc-owner-skip-launch-constraints.patch" "$ROOT/patches/xnu/zzyb-native-cryptex-os-view.patch" \
     "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
+    "$ROOT/patches/xnu/zzyc-owner-skip-launch-constraints.patch" "$ROOT/patches/xnu/zzyb-native-cryptex-os-view.patch" \
+    "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
   if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply --reverse "$LATE_PATCH"
   fi
