@@ -39,6 +39,40 @@ build = ["build-arm-driver.py", "ArmDTPlatform"]
 outputs = ["build/armdt-platform/libArmDTPlatform.a"]
 
 [[component]]
+id = "QcomPmicRtc"
+kind = "driver"
+function = "Qualcomm SPMI PMIC real-time clock (IORTC)"
+scope = "controller"
+path = "drivers/QcomPmicRtc"
+hardware = ["Qualcomm PMIC RTC (pm8941, pmk8350 layout) behind SPMI PMIC arbiter v5 or v7"]
+os_abi = ["ipados-17.7.11-21H461"]
+board_dependencies = ["SPMI arbiter, PMIC and RTC nodes in the device tree"]
+verified_devices = []
+dependencies = ["ArmDTPlatform"]
+source_files = ["QcomPmicRtc.cpp"]
+runtime_identifiers = ["QcomPmicRtc", "QcomPmicRtc.cpp"]
+build_stage = "kernel"
+build = ["build-arm-driver.py", "QcomPmicRtc"]
+outputs = ["build/qcom-pmic-rtc/libQcomPmicRtc.a"]
+
+[[component]]
+id = "Pl031Rtc"
+kind = "driver"
+function = "ARM PrimeCell PL031 real-time clock (IORTC)"
+scope = "controller"
+path = "drivers/Pl031Rtc"
+hardware = ["ARM PL031 RTC"]
+os_abi = ["ipados-17.7.11-21H461"]
+board_dependencies = ["arm,pl031 node in the device tree"]
+verified_devices = []
+dependencies = ["ArmDTPlatform"]
+source_files = ["Pl031Rtc.cpp"]
+runtime_identifiers = ["Pl031Rtc", "Pl031Rtc.cpp"]
+build_stage = "kernel"
+build = ["build-arm-driver.py", "Pl031Rtc"]
+outputs = ["build/pl031-rtc/libPl031Rtc.a"]
+
+[[component]]
 id = "ArmVirtPlatform"
 kind = "driver"
 function = "QEMU virt platform expert"

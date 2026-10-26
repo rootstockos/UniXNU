@@ -44,7 +44,7 @@ if [ -z "${UNIXNU_PATCH_LIST:-}" ]; then
 for LATE_PATCH in "$ROOT/patches/xnu/zzzzzzzz-watchdog-policy.patch" "$ROOT/patches/xnu/zzzzzzz-last-panic-print.patch" \
     "$ROOT/patches/xnu/zzzzzz-video-console-text.patch" "$ROOT/patches/xnu/zzzzz-video-console-physical-fb.patch" \
     "$ROOT/patches/xnu/zzzz-offline-owner-systemos-bringup.patch" "$ROOT/patches/xnu/zzz-boot-progress.patch" \
-    "$ROOT/patches/xnu/zzyf-board-amp.patch" "$ROOT/patches/xnu/zzye-board-cpu-idle.patch" \
+    "$ROOT/patches/xnu/zzyf-board-amp.patch" "$ROOT/patches/xnu/zzye-board-cpu-idle.patch" "$ROOT/patches/xnu/zzyd-native-rtc-offset.patch" \
     "$ROOT/patches/xnu/zzyc-owner-skip-launch-constraints.patch" "$ROOT/patches/xnu/zzyb-native-cryptex-os-view.patch" \
     "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
   if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
@@ -232,6 +232,17 @@ fi
 if [ "${XNU_NATIVE_UFS:-0}" = 1 ]; then
   PERSONALITY_CFLAGS="$PERSONALITY_CFLAGS -DXNU_NATIVE_UFS=1"
 fi
+# RTC drivers publish IORTC; the platform expert forwards the calendar to them (drivers/QcomPmicRtc, drivers/Pl031Rtc).
+for RTC in QCOM_PMIC_RTC PL031_RTC; do
+  RTC_VALUE=$(eval "echo \${XNU_$RTC:-0}")
+  if [ "$RTC_VALUE" != 0 ] && [ "$RTC_VALUE" != 1 ]; then
+    echo "XNU_$RTC must be 0 or 1" >&2
+    exit 1
+  fi
+  if [ "$RTC_VALUE" = 1 ]; then
+    PERSONALITY_CFLAGS="$PERSONALITY_CFLAGS -DXNU_$RTC=1"
+  fi
+done
 NATIVE_VIRTIO_CONSOLE=${XNU_NATIVE_VIRTIO_CONSOLE:-0}
 if [ "$NATIVE_VIRTIO_CONSOLE" != 0 ] && [ "$NATIVE_VIRTIO_CONSOLE" != 1 ]; then
   echo 'XNU_NATIVE_VIRTIO_CONSOLE must be 0 or 1' >&2
@@ -640,6 +651,18 @@ if [ "${XNU_SOURCE_CORECRYPTO14:-0}" = 1 ] && [ "$BOOTSTRAP" = 0 ]; then
     test -f "$ARMCPU_ARCHIVE"
     KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$ARMCPU_ARCHIVE"
     KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $ARMCPU_ARCHIVE"
+  fi
+  if [ "${XNU_QCOM_PMIC_RTC:-0}" = 1 ]; then
+    QCOM_PMIC_RTC_ARCHIVE=$ROOT/build/qcom-pmic-rtc/libQcomPmicRtc.a
+    test -f "$QCOM_PMIC_RTC_ARCHIVE"
+    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$QCOM_PMIC_RTC_ARCHIVE"
+    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $QCOM_PMIC_RTC_ARCHIVE"
+  fi
+  if [ "${XNU_PL031_RTC:-0}" = 1 ]; then
+    PL031_RTC_ARCHIVE=$ROOT/build/pl031-rtc/libPl031Rtc.a
+    test -f "$PL031_RTC_ARCHIVE"
+    KERNEL_EXTRA_ARCHIVES="$KERNEL_EXTRA_ARCHIVES -Wl,-force_load,$PL031_RTC_ARCHIVE"
+    KERNEL_ARCHIVE_DEPENDENCIES="$KERNEL_ARCHIVE_DEPENDENCIES $PL031_RTC_ARCHIVE"
   fi
   if [ "${XNU_NATIVE_UFS:-0}" = 1 ]; then
     UFS_ARCHIVE=$ROOT/build/sheng-ufs/libShengUfs.a

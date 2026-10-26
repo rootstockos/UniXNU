@@ -203,13 +203,16 @@ def arm_io_window(hardware):
 
 
 STRINGS = {'compatible', 'device_type', 'reg-names', 'interrupt-names', 'clock-names', 'method'}
-U32 = {'phandle', 'linux,phandle', '#interrupt-cells', '#iommu-cells', '#clock-cells', 'clock-frequency', 'timebase-frequency'}
+U32 = {'phandle', 'linux,phandle', '#interrupt-cells', '#iommu-cells', '#clock-cells', 'clock-frequency', 'timebase-frequency',
+       'qcom,ee'}
 U64 = {'redistributor-stride'}
-FLAGS = {'interrupt-controller', 'dma-coherent'}
+FLAGS = {'interrupt-controller', 'dma-coherent', 'allow-set-time'}
 REFERENCES = {'interrupt-parent': None, 'iommus': '#iommu-cells', 'clocks': '#clock-cells'}
 
 
-def hardware_properties(entry, handles, base=0):
+def hardware_properties(entry, handles, base=0, local=False):
+    """ADT properties of an exported node. A nested node (local) sits on its parent's bus, such as a PMIC on SPMI: its
+    reg keeps the bus-local cells, and its interrupts are left to the parent's driver."""
     properties = []
     for key, raw in entry.properties.items():
         if key in STRINGS:
@@ -237,6 +240,8 @@ def hardware_properties(entry, handles, base=0):
             if index != len(cells) or not cells:
                 raise Error(f'{entry.name}: invalid {key} arguments')
             properties.append((key, struct.pack(f'<{len(cells)}I', *cells)))
+        elif key == 'interrupts' and local:
+            continue
         elif key == 'interrupts':
             provider = entry
             while provider and 'interrupt-parent' not in provider.properties:
@@ -250,10 +255,23 @@ def hardware_properties(entry, handles, base=0):
             properties.append((key, struct.pack(f'<{len(cells)}I', *cells)))
             if 'interrupt-parent' not in entry.properties:
                 properties.append(('interrupt-parent', struct.pack('<I', handle)))
+        elif key == 'reg' and local:
+            cells = entry.cells(key)
+            properties.append((key, struct.pack(f'<{len(cells)}I', *cells)))
         elif key == 'reg':
             pairs = [(physical(entry.parent, address, size) - base, size) for address, size in registers(entry)]
             properties.append((key, b''.join(struct.pack('<QQ', *pair) for pair in pairs)))
     return properties
+
+
+def exported_parent(entry):
+    """The nearest enabled ancestor that is itself exported to the ADT, or None."""
+    parent = entry.parent
+    while parent is not None:
+        if 'unixnu,adt-name' in parent.properties and parent.enabled():
+            return parent
+        parent = parent.parent
+    return None
 
 
 PROPERTY_TYPES = ('string', 'strings', 'u32', 'u64', 'bytes')
@@ -365,14 +383,23 @@ def generate(dtb, config, *, unique_chip_id=None, data=False, trust=False, addon
         if psci is None or psci.strings('method') not in (['smc'], ['hvc']):
             raise Error('Multiple CPUs require a PSCI method')
         children.append(node('psci', hardware_properties(psci, handles)))
-    hardware = [entry for entry in entries if 'unixnu,adt-name' in entry.properties and entry.enabled()]
-    names = [entry.strings('unixnu,adt-name')[0] for entry in hardware]
+    exported = [entry for entry in entries if 'unixnu,adt-name' in entry.properties and entry.enabled()]
+    names = [entry.strings('unixnu,adt-name')[0] for entry in exported]
     if len(set(names)) != len(names):
         raise Error('Exported ADT hardware names must be unique')
+    # A node exported below another exported node (a PMIC below its SPMI arbiter, its RTC below the PMIC) becomes that node's
+    # ADT child on the parent's bus; only the top-level nodes are arm-io children with MMIO registers.
+    owner = {id(entry): exported_parent(entry) for entry in exported}
+    hardware = [entry for entry in exported if owner[id(entry)] is None]
     base, size = arm_io_window(hardware)
+
+    def device(entry, local):
+        nested = [child for child in exported if owner[id(child)] is entry]
+        return node(entry.strings('unixnu,adt-name')[0], hardware_properties(entry, handles, base, local),
+                    [device(child, True) for child in nested])
     children.append(node('arm-io', [('device_type', b'arm-io\0'), ('#address-cells', struct.pack('<I', 2)),
                          ('#size-cells', struct.pack('<I', 2)), ('ranges', struct.pack('<QQQ', 0, base, size))],
-                         [node(name, hardware_properties(entry, handles, base)) for name, entry in zip(names, hardware)]))
+                         [device(entry, False) for entry in hardware]))
     for name in ('defaults', 'options', 'product', 'buttons'):
         if name in platform or name in ('defaults', 'options', 'product'):
             children.append(platform_node(name, platform.get(name, {})))
