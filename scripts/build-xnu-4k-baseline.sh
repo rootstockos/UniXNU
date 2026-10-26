@@ -38,10 +38,13 @@ if [ -z "${UNIXNU_PATCH_LIST:-}" ]; then
 # The same holds for the boot-time GPU addon mount and the staged system apps copy (zzy), which edit the owner Data mount function
 # inside the systemos patch. The bring-up owner cache guard (zzzz), the video console patches (zzzzz to zzzzzzz, each on
 # the previous one's context) and the watchdog policy call (zzzzzzzz) sit on top of zzz-boot-progress. A kernel build
+# after the bootstrap pass meets them already applied. The board patches zzye and zzyf (the CPU idle helper, the AMP scheduler) add
+# lines inside earlier patches' context (zzyf: native-arm-pan's in BCM2837.h), so they are reversed too.
 # after the bootstrap pass meets them already applied. Reverse newest first; the loop below re-applies them in name order.
 for LATE_PATCH in "$ROOT/patches/xnu/zzzzzzzz-watchdog-policy.patch" "$ROOT/patches/xnu/zzzzzzz-last-panic-print.patch" \
     "$ROOT/patches/xnu/zzzzzz-video-console-text.patch" "$ROOT/patches/xnu/zzzzz-video-console-physical-fb.patch" \
     "$ROOT/patches/xnu/zzzz-offline-owner-systemos-bringup.patch" "$ROOT/patches/xnu/zzz-boot-progress.patch" \
+    "$ROOT/patches/xnu/zzyf-board-amp.patch" "$ROOT/patches/xnu/zzye-board-cpu-idle.patch" \
     "$ROOT/patches/xnu/zzyc-owner-skip-launch-constraints.patch" "$ROOT/patches/xnu/zzyb-native-cryptex-os-view.patch" \
     "$ROOT/patches/xnu/zzy-staged-system-apps.patch" "$ROOT/patches/xnu/zzy-native-gpu-addon-mount.patch"; do
   if git -C .cache/xnu-work apply --reverse --check "$LATE_PATCH" >/dev/null 2>&1; then
