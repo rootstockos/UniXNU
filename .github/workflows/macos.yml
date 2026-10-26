@@ -213,6 +213,8 @@ jobs:
       # recompiles only what changed (the build script's stamp files drop the objects an option change affects).
       # Keyed by the XNU patches and build script: a run restores the newest cache with the same patches, a patch change
       # starts over. Nothing derived from Apple binaries is cached (no IPSW, kernelcache, prelinked kernel or archives).
+      # The tree holds host tools XNU's build compiles for the runner's CPU (SETUP/replacecontents and others), so an x64
+      # runner keeps its own entries; arm64's keys are unchanged.
       - name: Restore the XNU build tree
         id: xnu-cache
         uses: actions/cache/restore@v4
@@ -229,9 +231,9 @@ jobs:
             out/*/tree/build/availability
             out/*/*/*/tree/build/availability
             out/*/*/*/xnu-inputs.json
-          key: xnu-tree-v1-${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-${{ github.run_id }}
+          key: xnu-tree-v1-${{ runner.arch == 'X64' && 'x64-' || '' }}${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-${{ github.run_id }}
           restore-keys: |
-            xnu-tree-v1-${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-
+            xnu-tree-v1-${{ runner.arch == 'X64' && 'x64-' || '' }}${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-
 
       - name: Run pre-build steps
         if: inputs.pre_build != ''
@@ -398,7 +400,7 @@ jobs:
             out/*/tree/build/availability
             out/*/*/*/tree/build/availability
             out/*/*/*/xnu-inputs.json
-          key: xnu-tree-v1-${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-${{ github.run_id }}
+          key: xnu-tree-v1-${{ runner.arch == 'X64' && 'x64-' || '' }}${{ hashFiles('patches/xnu/**', 'kits/NativePrelink/patches/**', 'scripts/build-xnu-4k-baseline.sh', 'scripts/prepare-xnu-source.py', 'feeds.toml') }}-${{ github.run_id }}
 
       - name: Remove proprietary inputs
         if: always()
