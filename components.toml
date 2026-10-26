@@ -472,6 +472,25 @@ build = []
 outputs = []
 
 [[component]]
+id = "Sm7635Platform"
+kind = "kit"
+function = "SM7635 GPU platform operations"
+scope = "soc"
+repository = "https://github.com/rootstockos/UniXNU-sm7635-common.git"
+revision = "8dadec8f3136de8c089c6130dd4f2ced4c5bde34"
+path = "kits/Sm7635Platform"
+hardware = ["Qualcomm SM7635"]
+os_abi = []
+board_dependencies = ["GPU firmware and power inputs"]
+verified_devices = []
+dependencies = ["AdrenoFirmware", "ArmSmmu4K"]
+source_files = ["ShengGmu.c", "ShengGmuCommandDb.c"]
+runtime_identifiers = ["ShengGmu.c", "ShengGmuCommandDb.c"]
+build_stage = "embedded"
+build = []
+outputs = []
+
+[[component]]
 id = "Ath12kWifi"
 repository_id = 1431462336
 kind = "driver"
