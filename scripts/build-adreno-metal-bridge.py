@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = json.loads((ROOT / 'scripts/data/gpu-metal-vulkan-inputs.json').read_text())['translator']['commit']
@@ -86,11 +87,17 @@ runtime_id = hashlib.sha256((PIN + '\n' + states[-1]).encode()).hexdigest()[:32]
 env = dict(os.environ, NMB_RUNTIME_ID=runtime_id, NMB_FIXTURE_AIR=str(air), NMB_FC_AIR=str(fc_air), IPHONEOS_DEPLOYMENT_TARGET='17.0', MACOSX_DEPLOYMENT_TARGET='14.0')
 target_dir = ROOT / 'build/m2v-target'
 log = out / ('build-%s.log' % args.target)
-with log.open('w') as stream:
-    result = subprocess.run(['cargo', '+1.98.0', 'build', '--release', '--manifest-path', manifest, '--target', triple,
-                             '--target-dir', target_dir], env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=1800)
-if result.returncode:
-    raise SystemExit(log.read_text()[-6000:])
+# cargo's output goes to the console as it runs (CI logs show progress) and to the log file.
+with log.open('w') as stream, subprocess.Popen(['cargo', '+1.98.0', 'build', '--release', '--manifest-path', manifest, '--target', triple,
+                                                '--target-dir', target_dir], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                               text=True, errors='replace') as cargo:
+    for line in cargo.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        stream.write(line)
+    returncode = cargo.wait(timeout=1800)
+if returncode:
+    raise SystemExit(f'cargo failed ({returncode}); full output above and in {log}')
 library = target_dir / triple / 'release/libadreno_metal_bridge.a'
 final = out / args.target / 'libadreno_metal_bridge.a'
 final.parent.mkdir(exist_ok=True)
