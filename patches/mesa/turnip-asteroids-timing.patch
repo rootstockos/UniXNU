@@ -66,7 +66,7 @@ index 6b9452e..d0218f5 100644
  
     trace_start_clear_depth_stencil_image(&cmd->trace, &cmd->cs, cmd,
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
-index aba5132..7e4c22d 100644
+index aba5132..934d4bb 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
 @@ -7,6 +7,9 @@
@@ -79,16 +79,74 @@ index aba5132..7e4c22d 100644
  #include "tu_cmd_buffer.h"
  
  #include "vk_common_entrypoints.h"
-@@ -4039,6 +4042,105 @@ tu_cmd_render_sysmem(struct tu_cmd_buffer *cmd,
+@@ -3701,7 +3704,9 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+    if (cmd->state.prim_generated_query_running_before_rp)
+       tu_emit_event_write<CHIP>(cmd, cs, FD_STOP_PRIMITIVE_CTRS);
+ 
++   tu_dw_rp_stamp(cmd, cs, TU_DW_RP_TILE);
+    tu_cs_emit_call(cs, &cmd->draw_cs);
++   tu_dw_rp_stamp(cmd, cs, TU_DW_RP_DRAWS);
+ 
+    if (cmd->state.prim_generated_query_running_before_rp)
+       tu_emit_event_write<CHIP>(cmd, cs, FD_START_PRIMITIVE_CTRS);
+@@ -3729,6 +3734,7 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+    }
+ 
+    tu_cs_emit_call(cs, &cmd->tile_store_cs);
++   tu_dw_rp_tile_end(cmd, cs);
+ 
+    tu_clone_trace_range<CHIP>(cmd, cs, &cmd->trace, cmd->trace_renderpass_start, u_trace_end_iterator(&cmd->rp_trace));
+    tu_cs_emit_wfi(cs);
+@@ -3924,6 +3930,8 @@ tu_cmd_render_tiles(struct tu_cmd_buffer *cmd,
+    tu_cs_end(&cmd->tile_store_cs);
+ 
+    tu6_tile_render_begin<CHIP>(cmd, &cmd->cs, rp_ctx, fdm_offsets);
++   tu_dw_rp_stamp(cmd, &cmd->cs, TU_DW_RP_BEGIN);
++   cmd->dw_rp_tiles = 0;
+ 
+    /* Note: we reverse the order of walking the pipes and tiles on every
+     * other row, to improve texture cache locality compared to raster order.
+@@ -4039,6 +4047,225 @@ tu_cmd_render_sysmem(struct tu_cmd_buffer *cmd,
     tu_trace_end_render_pass<CHIP>(cmd, false);
  }
  
 +
 +/* asteroids: see tu_dw_kind in tu_cmd_buffer.h. */
-+void (*tu_dw_send_times)(const uint32_t *words, unsigned count);
++void (*tu_dw_send_times)(uint32_t tag, const uint32_t *words, unsigned count);
 +static simple_mtx_t tu_dw_mtx = SIMPLE_MTX_INITIALIZER;
 +static uint64_t tu_dw_ticks[TU_DW_KINDS], tu_dw_last_send_ns;
 +static uint32_t tu_dw_counts[TU_DW_KINDS], tu_dw_buffers, tu_dw_unrun, tu_dw_dropped;
++/* TU_DW_TIME=tiles, GMEM pass stages: ticks for begin (binning included), loads, draws, stores, end and between tiles; then counts */
++static uint64_t tu_dw_stage_ticks[6];
++static uint32_t tu_dw_stage_passes, tu_dw_stage_tiles, tu_dw_stage_binning, tu_dw_stage_rejected, tu_dw_stage_max_tiles,
++   tu_dw_stage_loads, tu_dw_stage_stores, tu_dw_stage_multi;
++static uint64_t tu_dw_stage_tile_px, tu_dw_stage_area_px;
++
++/* TU_DW_TIME: absent 0 (off), "passes" 1, "tiles" 3 (passes, and GMEM passes by stage), anything else 2 (all kinds). */
++static int
++tu_dw_mode(void)
++{
++   static int mode = -1;
++   if (mode < 0) {
++      const char *v = getenv("TU_DW_TIME");
++      mode = !v ? 0 : !strcmp(v, "passes") ? 1 : !strcmp(v, "tiles") ? 3 : 2;
++   }
++   return mode;
++}
++
++/* T58: the GPU writes these, so they come from the sub stream's GPU-writable memory; command memory is mapped GPU read-only
++ * (tu_cs_add_bo), and T55 and T57 hung writing their stamps there. */
++static bool
++tu_dw_alloc(struct tu_cmd_buffer *cmd, uint32_t dwords, struct tu_cs_memory *memory)
++{
++   tu_cs_set_writeable(&cmd->sub_cs, true);
++   const VkResult result = tu_cs_alloc(&cmd->sub_cs, 1, dwords, memory);
++   tu_cs_set_writeable(&cmd->sub_cs, false);
++   if (result != VK_SUCCESS)
++      return false;
++   memset(memory->map, 0, dwords * 4);
++   return true;
++}
 +
 +static void
 +tu_dw_timestamp(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint64_t iova, bool end)
@@ -107,34 +165,77 @@ index aba5132..7e4c22d 100644
 +unsigned
 +tu_dw_time_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs, unsigned kind)
 +{
-+   /* Only where TU_DW_TIME is set (the asteroids Metal plugin sets it in the render server with asteroids-tu-time=<passes|all>). */
-+   /* TU_DW_TIME=passes times render passes only; any other value also blits, copies, resolves and clears. */
-+   static int enabled = -1;
-+   if (enabled < 0) {
-+      const char *mode = getenv("TU_DW_TIME");
-+      enabled = !mode ? 0 : !strcmp(mode, "passes") ? 1 : 2;
-+   }
-+   if (!enabled || (enabled == 1 && kind != TU_DW_PASS_GMEM && kind != TU_DW_PASS_SYSMEM))
++   /* Only where TU_DW_TIME is set (the asteroids Metal plugin sets it in the render server with asteroids-tu-time=<value>). */
++   const int mode = tu_dw_mode();
++   if (!mode || (mode != 2 && kind != TU_DW_PASS_GMEM && kind != TU_DW_PASS_SYSMEM))
 +      return ~0u;
 +   if (cmd->dw_slot_count >= TU_DW_MAX_SLOTS) {
 +      p_atomic_inc(&tu_dw_dropped);
 +      return ~0u;
 +   }
-+   /* T58: the GPU writes the slot, so it comes from the sub stream's GPU-writable memory; command memory is mapped GPU read-only
-+    * (tu_cs_add_bo), and T55 and T57 hung writing their stamps there. */
 +   struct tu_cs_memory memory;
-+   tu_cs_set_writeable(&cmd->sub_cs, true);
-+   const VkResult result = tu_cs_alloc(&cmd->sub_cs, 1, 4, &memory);
-+   tu_cs_set_writeable(&cmd->sub_cs, false);
-+   if (result != VK_SUCCESS)
++   if (!tu_dw_alloc(cmd, 4, &memory))
 +      return ~0u;
-+   memset(memory.map, 0, 16);
 +   const unsigned slot = cmd->dw_slot_count++;
++   cmd->dw_slots[slot] = {};
 +   cmd->dw_slots[slot].map = memory.map;
 +   cmd->dw_slots[slot].iova = memory.iova;
 +   cmd->dw_slots[slot].kind = (uint8_t) kind;
 +   tu_dw_timestamp(cmd, cs, memory.iova, false);
 +   return slot;
++}
++
++/* T59, TU_DW_TIME=tiles: at the first subpass's begin, a stage record for the pass, and in draw_cs after its loads and clears (GMEM
++ * only) the loads stamp, which every tile runs. */
++void
++tu_dw_rp_loads(struct tu_cmd_buffer *cmd)
++{
++   cmd->dw_rp_map = NULL;
++   if (tu_dw_mode() != 3)
++      return;
++   struct tu_cs_memory memory;
++   if (!tu_dw_alloc(cmd, TU_DW_RP_WORDS * 2, &memory))
++      return;
++   cmd->dw_rp_map = (uint64_t *) memory.map;
++   cmd->dw_rp_iova = memory.iova;
++   tu_cond_exec_start(&cmd->draw_cs, CP_COND_EXEC_0_RENDER_MODE_GMEM);
++   tu_dw_timestamp(cmd, &cmd->draw_cs, cmd->dw_rp_iova + TU_DW_RP_LOADS * 8, true);
++   tu_cond_exec_end(&cmd->draw_cs);
++}
++
++/* A stage stamp into the pass's record; the tile start does not wait for idle (the previous tile ended with one). */
++void
++tu_dw_rp_stamp(struct tu_cmd_buffer *cmd, struct tu_cs *cs, unsigned which)
++{
++   if (cmd->dw_rp_map)
++      tu_dw_timestamp(cmd, cs, cmd->dw_rp_iova + which * 8, which != TU_DW_RP_TILE);
++}
++
++/* After a tile's stores: its stores stamp, then the GPU adds the tile's loads, draws and stores into the record's sums
++ * (dst = srcA + srcB - srcC, as the occlusion queries accumulate). */
++void
++tu_dw_rp_tile_end(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
++{
++   if (!cmd->dw_rp_map)
++      return;
++   tu_dw_timestamp(cmd, cs, cmd->dw_rp_iova + TU_DW_RP_STORES * 8, true);
++   tu_cs_emit_pkt7(cs, CP_WAIT_MEM_WRITES, 0);
++   tu_cs_emit_pkt7(cs, CP_WAIT_FOR_ME, 0);
++   static const unsigned sums[3][3] = {
++      {TU_DW_RP_SUM_LOADS, TU_DW_RP_LOADS, TU_DW_RP_TILE},
++      {TU_DW_RP_SUM_DRAWS, TU_DW_RP_DRAWS, TU_DW_RP_LOADS},
++      {TU_DW_RP_SUM_STORES, TU_DW_RP_STORES, TU_DW_RP_DRAWS},
++   };
++   for (unsigned i = 0; i < 3; i++) {
++      tu_cs_emit_pkt7(cs, CP_MEM_TO_MEM, 9);
++      tu_cs_emit(cs, CP_MEM_TO_MEM_0_DOUBLE | CP_MEM_TO_MEM_0_NEG_C);
++      tu_cs_emit_qw(cs, cmd->dw_rp_iova + sums[i][0] * 8);
++      tu_cs_emit_qw(cs, cmd->dw_rp_iova + sums[i][0] * 8);
++      tu_cs_emit_qw(cs, cmd->dw_rp_iova + sums[i][1] * 8);
++      tu_cs_emit_qw(cs, cmd->dw_rp_iova + sums[i][2] * 8);
++   }
++   tu_cs_emit_pkt7(cs, CP_WAIT_MEM_WRITES, 0);
++   cmd->dw_rp_tiles++;
 +}
 +
 +void
@@ -148,6 +249,8 @@ index aba5132..7e4c22d 100644
 +void
 +tu_dw_time_collect(struct tu_cmd_buffer *cmd)
 +{
++   cmd->dw_rp_map = NULL;
++   cmd->dw_rp_tiles = 0;
 +   if (!cmd->dw_slot_count)
 +      return;
 +   simple_mtx_lock(&tu_dw_mtx);
@@ -160,6 +263,31 @@ index aba5132..7e4c22d 100644
 +      }
 +      tu_dw_ticks[cmd->dw_slots[i].kind] += end - start;
 +      tu_dw_counts[cmd->dw_slots[i].kind]++;
++      const struct tu_dw_slot *sl = &cmd->dw_slots[i];
++      if (sl->rp_map && sl->tiles) {
++         const volatile uint64_t *rp = sl->rp_map;
++         const uint64_t begin = rp[TU_DW_RP_BEGIN], last = rp[TU_DW_RP_STORES];
++         const uint64_t loads = rp[TU_DW_RP_SUM_LOADS], draws = rp[TU_DW_RP_SUM_DRAWS], stores = rp[TU_DW_RP_SUM_STORES];
++         if (begin < start || last < begin || end < last || loads + draws + stores > last - begin) {
++            tu_dw_stage_rejected++;   /* a stamp missing (no loads stamp in this pass's draw_cs) or out of order */
++            continue;
++         }
++         tu_dw_stage_ticks[0] += begin - start;
++         tu_dw_stage_ticks[1] += loads;
++         tu_dw_stage_ticks[2] += draws;
++         tu_dw_stage_ticks[3] += stores;
++         tu_dw_stage_ticks[4] += end - last;
++         tu_dw_stage_ticks[5] += (last - begin) - (loads + draws + stores);
++         tu_dw_stage_passes++;
++         tu_dw_stage_tiles += sl->tiles;
++         tu_dw_stage_max_tiles = MAX2(tu_dw_stage_max_tiles, sl->tiles);
++         tu_dw_stage_binning += sl->binning;
++         tu_dw_stage_loads += sl->loads;
++         tu_dw_stage_stores += sl->stores;
++         tu_dw_stage_multi += sl->subpasses > 1;
++         tu_dw_stage_tile_px += (uint64_t) sl->tile_px * sl->tiles;
++         tu_dw_stage_area_px += sl->area_px;
++      }
 +   }
 +   tu_dw_buffers++;
 +   cmd->dw_slot_count = 0;
@@ -177,7 +305,26 @@ index aba5132..7e4c22d 100644
 +      words[12] = tu_dw_buffers; words[13] = tu_dw_unrun; words[14] = p_atomic_xchg(&tu_dw_dropped, 0);
 +      tu_dw_buffers = tu_dw_unrun = 0;
 +      tu_dw_last_send_ns = now;
-+      tu_dw_send_times(words, 15);
++      tu_dw_send_times(0x54494d45u, words, 15);   /* 'TIME' */
++      if (tu_dw_mode() == 3) {
++         /* [0] GMEM passes by stage, [1..6] microseconds in begin (binning included), loads and clears, draws, stores, end, between
++          * tiles, [7] tiles, [8] passes with HW binning, [9] tile pixels rendered and [10] render area, in kilopixels, [11] attachments
++          * loaded, [12] stored, [13] passes rejected, [14] most tiles in a pass, [15] passes with more than one subpass */
++         uint32_t t[16];
++         t[0] = tu_dw_stage_passes;
++         for (unsigned k = 0; k < 6; k++) {
++            t[1 + k] = (uint32_t) (tu_dw_stage_ticks[k] * 10 / 192);
++            tu_dw_stage_ticks[k] = 0;
++         }
++         t[7] = tu_dw_stage_tiles; t[8] = tu_dw_stage_binning;
++         t[9] = (uint32_t) (tu_dw_stage_tile_px >> 10); t[10] = (uint32_t) (tu_dw_stage_area_px >> 10);
++         t[11] = tu_dw_stage_loads; t[12] = tu_dw_stage_stores; t[13] = tu_dw_stage_rejected; t[14] = tu_dw_stage_max_tiles;
++         t[15] = tu_dw_stage_multi;
++         tu_dw_stage_passes = tu_dw_stage_tiles = tu_dw_stage_binning = tu_dw_stage_loads = tu_dw_stage_stores = 0;
++         tu_dw_stage_rejected = tu_dw_stage_max_tiles = tu_dw_stage_multi = 0;
++         tu_dw_stage_tile_px = tu_dw_stage_area_px = 0;
++         tu_dw_send_times(0x54494c45u, t, 16);   /* 'TILE' */
++      }
 +   }
 +   simple_mtx_unlock(&tu_dw_mtx);
 +}
@@ -185,7 +332,7 @@ index aba5132..7e4c22d 100644
  template <chip CHIP>
  void
  tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
-@@ -4051,6 +4153,7 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
+@@ -4051,6 +4278,7 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
  
     tu_autotune::rp_ctx_t rp_ctx = NULL;
     const bool sysmem = use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key);
@@ -193,15 +340,31 @@ index aba5132..7e4c22d 100644
     cmd_buffer->dw_stats.passes++;
     cmd_buffer->dw_stats.sysmem += sysmem;
     if (sysmem) {
-@@ -4073,6 +4176,7 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
+@@ -4073,6 +4301,23 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
        tu_cmd_render_sysmem<CHIP>(cmd_buffer, rp_ctx);
     else
        tu_cmd_render_tiles<CHIP>(cmd_buffer, rp_ctx, fdm_offsets);
 +   tu_dw_time_end(cmd_buffer, &cmd_buffer->cs, dw_slot);
++   if (!sysmem && dw_slot < cmd_buffer->dw_slot_count && cmd_buffer->dw_rp_map) {
++      struct tu_dw_slot *sl = &cmd_buffer->dw_slots[dw_slot];
++      const struct tu_render_pass *pass = cmd_buffer->state.pass;
++      sl->rp_map = cmd_buffer->dw_rp_map;
++      sl->tiles = cmd_buffer->dw_rp_tiles;
++      sl->tile_px = cmd_buffer->state.tiling->tile0.width * cmd_buffer->state.tiling->tile0.height;
++      sl->area_px = cmd_buffer->state.render_areas[0].extent.width * cmd_buffer->state.render_areas[0].extent.height;
++      sl->binning = use_hw_binning(cmd_buffer);
++      for (uint32_t a = 0; a < pass->attachment_count; a++) {
++         sl->loads += pass->attachments[a].load || pass->attachments[a].load_stencil;
++         sl->stores += pass->attachments[a].store || pass->attachments[a].store_stencil;
++      }
++      sl->subpasses = (uint8_t) MIN2(pass->subpass_count, 255u);
++   }
++   cmd_buffer->dw_rp_map = NULL;
++   cmd_buffer->dw_rp_tiles = 0;
  }
  
  static void tu_reset_render_pass(struct tu_cmd_buffer *cmd_buffer)
-@@ -4172,6 +4276,7 @@ tu_cmd_buffer_destroy(struct vk_command_buffer *vk_cmd_buffer)
+@@ -4172,6 +4417,7 @@ tu_cmd_buffer_destroy(struct vk_command_buffer *vk_cmd_buffer)
     struct tu_cmd_buffer *cmd_buffer =
        container_of(vk_cmd_buffer, struct tu_cmd_buffer, vk);
  
@@ -209,7 +372,7 @@ index aba5132..7e4c22d 100644
     tu_cs_finish(&cmd_buffer->cs);
     tu_cs_finish(&cmd_buffer->draw_cs);
     tu_cs_finish(&cmd_buffer->tile_store_cs);
-@@ -4248,6 +4353,7 @@ tu_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
+@@ -4248,6 +4494,7 @@ tu_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
     struct tu_cmd_buffer *cmd_buffer =
        container_of(vk_cmd_buffer, struct tu_cmd_buffer, vk);
  
@@ -217,11 +380,20 @@ index aba5132..7e4c22d 100644
     VkResult status_check_result = VK_SUCCESS;
     if (TU_DEBUG_START(CHECK_CMD_BUFFER_STATUS))
        status_check_result = tu_cmd_buffer_status_check_idle(cmd_buffer);
+@@ -6895,6 +7142,8 @@ tu_emit_subpass_begin(struct tu_cmd_buffer *cmd)
+    }
+ 
+    tu_emit_resolve_group<CHIP>(cmd, &cmd->draw_cs, &resolve_group);
++   if (cmd->state.subpass == cmd->state.pass->subpasses)
++      tu_dw_rp_loads(cmd);
+ 
+    tu6_emit_zs<CHIP>(cmd, cmd->state.subpass, &cmd->draw_cs);
+    tu6_emit_mrt<CHIP>(cmd, cmd->state.subpass, &cmd->draw_cs);
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.h b/src/freedreno/vulkan/tu_cmd_buffer.h
-index 6078c3d..57ed0d3 100644
+index 6078c3d..5f1b6b4 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.h
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.h
-@@ -664,10 +664,32 @@ struct tu_dw_stats {
+@@ -664,10 +664,55 @@ struct tu_dw_stats {
  };
  extern struct tu_dw_stats tu_dw_pending;
  
@@ -237,13 +409,33 @@ index 6078c3d..57ed0d3 100644
 +   uint32_t *map;   /* start lo, start hi, end lo, end hi, written by the GPU */
 +   uint64_t iova;
 +   uint8_t kind;
++   /* TU_DW_TIME=tiles, GMEM passes: the pass's stage record (tu_dw_rp_*), its tiles, tile size in pixels, HW binning, attachments
++    * loaded and stored, subpasses, render area in pixels */
++   uint64_t *rp_map;
++   uint32_t tiles, tile_px, area_px;
++   uint8_t binning, loads, stores, subpasses;
 +};
-+extern void (*tu_dw_send_times)(const uint32_t *words, unsigned count);
++/* TU_DW_TIME=tiles: a GMEM pass's stage record, 64-bit always-on stamps written by the GPU: */
++enum tu_dw_rp {
++   TU_DW_RP_TILE,      /* a tile's start, before its draw IB */
++   TU_DW_RP_LOADS,     /* after the first subpass's loads and clears (in draw_cs, GMEM only) */
++   TU_DW_RP_DRAWS,     /* after the draw IB */
++   TU_DW_RP_STORES,    /* after the tile's stores */
++   TU_DW_RP_BEGIN,     /* after tu6_tile_render_begin (binning included) */
++   TU_DW_RP_SUM_LOADS, /* sums over the tiles, added by the GPU (CP_MEM_TO_MEM) */
++   TU_DW_RP_SUM_DRAWS,
++   TU_DW_RP_SUM_STORES,
++   TU_DW_RP_WORDS
++};
++extern void (*tu_dw_send_times)(uint32_t tag, const uint32_t *words, unsigned count);
 +struct tu_cmd_buffer;
 +struct tu_cs;
 +unsigned tu_dw_time_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs, unsigned kind);
 +void tu_dw_time_end(struct tu_cmd_buffer *cmd, struct tu_cs *cs, unsigned slot);
 +void tu_dw_time_collect(struct tu_cmd_buffer *cmd);
++void tu_dw_rp_loads(struct tu_cmd_buffer *cmd);
++void tu_dw_rp_stamp(struct tu_cmd_buffer *cmd, struct tu_cs *cs, unsigned which);
++void tu_dw_rp_tile_end(struct tu_cmd_buffer *cmd, struct tu_cs *cs);
 +
  struct tu_cmd_buffer
  {
@@ -251,11 +443,14 @@ index 6078c3d..57ed0d3 100644
     struct tu_dw_stats dw_stats;
 +   struct tu_dw_slot dw_slots[TU_DW_MAX_SLOTS];
 +   unsigned dw_slot_count;
++   uint64_t *dw_rp_map;   /* the current pass's stage record (TU_DW_TIME=tiles), from its first subpass to tu_cmd_render */
++   uint64_t dw_rp_iova;
++   uint32_t dw_rp_tiles;
  
     struct tu_device *device;
  
 diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
-index ad687d0..917fb98 100644
+index ad687d0..381aa5e 100644
 --- a/src/freedreno/vulkan/tu_knl_darwin.cc
 +++ b/src/freedreno/vulkan/tu_knl_darwin.cc
 @@ -88,6 +88,19 @@ dw_call(uint32_t method, const void *in, size_t in_size, void *out,
@@ -265,11 +460,11 @@ index ad687d0..917fb98 100644
 +/* asteroids: GPU time per kind of work (tu_dw_time_collect) to the kernel, which adds it to its totals: a SetMetadata call with no
 + * object and the tag 'TIME' in the reserved word (asteroids NativeAdreno), the words as the text. */
 +static void
-+darwin_send_times(const uint32_t *words, unsigned count)
++darwin_send_times(uint32_t tag, const uint32_t *words, unsigned count)
 +{
 +   NativeAdrenoAbiMetadata req = {};
 +   req.handle = 0;
-+   req.reserved = 0x54494d45u;
++   req.reserved = tag;
 +   req.bytes = MIN2(count * 4u, (unsigned) NativeAdrenoAbiMetadataBytes);
 +   memcpy(req.text, words, req.bytes);
 +   (void) dw_call(NativeAdrenoMethodSetMetadata, &req, sizeof(req), NULL, 0);
