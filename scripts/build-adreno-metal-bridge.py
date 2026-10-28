@@ -24,14 +24,14 @@ args = parser.parse_args()
 if subprocess.check_output(['git', '-C', str(SOURCE), 'rev-parse', 'HEAD'], text=True).strip() != PIN:
     raise SystemExit('Translator revision differs from the qualified source pin')
 PATCHES = [ROOT / 'drivers/AdrenoMetal/bridge/patches' / name for name in [
+    # Ported onto development (asteroids T62): each stacks on the source the ones before it leave.
     '0001-optional-constant-output-members.patch', '0002-resource-wait-storage-dependencies.patch',
-    '0003-cache-device-entry-point-priming.patch', '0004-fold-constant-global-field-loads.patch',
-    '0005-keep-module-decodes-and-profile-fingerprints.patch', '0006-skip-draws-without-a-pipeline.patch',
-    '0007-accept-two-plane-rgb-surfaces.patch', '0008-alias-padded-rows-of-written-textures.patch',
-    # The rest stack in order, each on the source the ones before it leave.
-    '0009-keep-final-pass.patch', '0010-fewer-allocations-per-draw.patch', '0011-keep-draw-commands.patch',
-    '0012-keep-draw-lists.patch', '0013-skip-unchanged-rebinds.patch', '0014-map-tracker-keys.patch',
-    '0015-two-plane-shadow-as-memory-lies.patch', '0016-tile-stores-within-rows.patch']]
+    '0003-fold-constant-global-field-loads.patch', '0004-skip-draws-without-a-pipeline.patch',
+    '0005-two-plane-shadow-as-memory-lies.patch', '0006-padded-rows-policy.patch', '0007-batch-barriers-on-the-stack.patch',
+    '0008-key-hash-the-draw-path-maps.patch', '0009-cache-device-entry-point-priming.patch', '0010-skip-unchanged-rebinds.patch',
+    '0011-optional-shader-cache-directory.patch', '0012-srgb-extended-range-blend-rounded-model.patch', '0013-llvm-bitreverse.patch',
+    '0014-growing-memory-blocks.patch', '0015-patch-with-no-control-points.patch',
+    '0016-heap-texture-size-a-multiple-of-its-alignment.patch', '0017-core-image-kernel-libraries.patch']]
 
 
 def git_tree(*steps):

@@ -24,7 +24,8 @@
 	url = https://github.com/UniXNU/AppleKeyStoreState.git
 [submodule "drivers/AdrenoMetal"]
 	path = drivers/AdrenoMetal
-	url = https://github.com/UniXNU/AdrenoMetal.git
+	url = https://github.com/rootstockos/AdrenoMetal.git
+	branch = asteroids
 [submodule "drivers/GopFramebuffer"]
 	path = drivers/GopFramebuffer
 	url = https://github.com/UniXNU/GopFramebuffer.git
