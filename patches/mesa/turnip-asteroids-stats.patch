@@ -59,10 +59,10 @@ index 1d33085..6b9452e 100644
     for (uint32_t j = 0; j < attachmentCount; j++) {
        if ((pAttachments[j].aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) == 0)
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
-index 60ad3a8..de7e89d 100644
+index 60ad3a8..aba5132 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
-@@ -4050,7 +4050,12 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
+@@ -4050,7 +4050,26 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
     tu_autotune::rp_key_opt rp_key = cmd_buffer->device->autotune->emit_preempt_latency_tracking_rp_hash(cmd_buffer);
  
     tu_autotune::rp_ctx_t rp_ctx = NULL;
@@ -70,13 +70,27 @@ index 60ad3a8..de7e89d 100644
 +   const bool sysmem = use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key);
 +   cmd_buffer->dw_stats.passes++;
 +   cmd_buffer->dw_stats.sysmem += sysmem;
++   if (sysmem) {
++      /* bit 0 TU_DEBUG(SYSMEM), 1 attachments don't fit, 2 empty render area, 3 tessellation, 4 attachment feedback loop,
++       * 5 too many tiles without HW binning, 6 autotune, 7 anything else (a non-framebuffer-space barrier) */
++      const char *why = cmd_buffer->state.rp.gmem_disable_reason ? cmd_buffer->state.rp.gmem_disable_reason : "";
++      unsigned bit = 7;
++      if (strstr(why, "TU_DEBUG(SYSMEM)")) bit = 0;
++      else if (strstr(why, "Can't fit")) bit = 1;
++      else if (strstr(why, "empty")) bit = 2;
++      else if (strstr(why, "tessellation")) bit = 3;
++      else if (strstr(why, "FEEDBACK") || strstr(why, "feedback")) bit = 4;
++      else if (strstr(why, "Too many tiles")) bit = 5;
++      else if (strstr(why, "Autotune")) bit = 6;
++      cmd_buffer->dw_stats.reasons |= 1u << bit;
++   }
 +   cmd_buffer->dw_stats.area += (uint64_t)cmd_buffer->state.render_areas[0].extent.width *
 +                                cmd_buffer->state.render_areas[0].extent.height;
 +   if (sysmem)
        tu_cmd_render_sysmem<CHIP>(cmd_buffer, rp_ctx);
     else
        tu_cmd_render_tiles<CHIP>(cmd_buffer, rp_ctx, fdm_offsets);
-@@ -4344,6 +4349,7 @@ tu_cmd_buffer_begin(struct tu_cmd_buffer *cmd_buffer,
+@@ -4344,6 +4363,7 @@ tu_cmd_buffer_begin(struct tu_cmd_buffer *cmd_buffer,
  {
     vk_command_buffer_begin(&cmd_buffer->vk, pBeginInfo);
  
@@ -84,7 +98,7 @@ index 60ad3a8..de7e89d 100644
     memset(&cmd_buffer->state, 0, sizeof(cmd_buffer->state));
     vk_dynamic_graphics_state_init(&cmd_buffer->vk.dynamic_graphics_state);
     cmd_buffer->vk.dynamic_graphics_state.vi = &cmd_buffer->state.vi;
-@@ -8309,6 +8315,7 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
+@@ -8309,6 +8329,7 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
                  /* note: draw_count is 0 for indirect */
                  uint32_t draw_count)
  {
@@ -93,10 +107,10 @@ index 60ad3a8..de7e89d 100644
     struct tu_render_pass_state *rp = &cmd->state.rp;
  
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.h b/src/freedreno/vulkan/tu_cmd_buffer.h
-index 17bebeb..16bdedb 100644
+index 17bebeb..6078c3d 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.h
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.h
-@@ -655,9 +655,18 @@ struct tu_cb_control_point {
+@@ -655,9 +655,19 @@ struct tu_cb_control_point {
     uint32_t original_value;
  };
  
@@ -104,6 +118,7 @@ index 17bebeb..16bdedb 100644
 + * (tu_knl_darwin.cc), where the board ties it to the submission's GPU time. */
 +struct tu_dw_stats {
 +   uint32_t passes, sysmem, blits, draws;
++   uint32_t reasons;   /* why passes ran in system memory, one bit per reason (tu_cmd_render) */
 +   uint64_t area;   /* render-area pixels of all passes */
 +};
 +extern struct tu_dw_stats tu_dw_pending;
@@ -116,7 +131,7 @@ index 17bebeb..16bdedb 100644
     struct tu_device *device;
  
 diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
-index f79cf32..1e0f9d1 100644
+index f79cf32..ad687d0 100644
 --- a/src/freedreno/vulkan/tu_knl_darwin.cc
 +++ b/src/freedreno/vulkan/tu_knl_darwin.cc
 @@ -823,11 +823,12 @@ darwin_note_fence(uint32_t fence)
@@ -133,21 +148,22 @@ index f79cf32..1e0f9d1 100644
     req.queue = 0;
     for (unsigned i = 0; i < count; i++)
        req.buffers[i] = entries[i];
-@@ -871,6 +872,13 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
+@@ -871,6 +872,14 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
     }
  
     uint32_t fence = 0;
 +   /* asteroids: the command buffers' passes (bits 0-5), passes rendered in system memory (6-11), blits, copies and clears (12-17),
-+    * draws / 4 (18-25) and render-area megapixels (26-31), each saturated, ride the first chunk's reserved word; the kernel keeps
-+    * them per fence (native_adreno_submit_stats) and the board adds the submission's GPU time to them. */
++    * why passes ran in system memory (18-25, one bit per reason, tu_cmd_render) and render-area megapixels (26-31), saturated, ride
++    * the first chunk's reserved word; the kernel keeps them per fence (native_adreno_submit_stats) and the board adds the
++    * submission's GPU time to them. */
 +   const uint32_t stats = MIN2(tu_dw_pending.passes, 63u) | MIN2(tu_dw_pending.sysmem, 63u) << 6 |
-+                          MIN2(tu_dw_pending.blits, 63u) << 12 | MIN2(tu_dw_pending.draws / 4, 255u) << 18 |
++                          MIN2(tu_dw_pending.blits, 63u) << 12 | (tu_dw_pending.reasons & 255u) << 18 |
 +                          (uint32_t)MIN2(tu_dw_pending.area >> 20, (uint64_t)63) << 26;
 +   memset(&tu_dw_pending, 0, sizeof(tu_dw_pending));
     const unsigned total = util_dynarray_num_elements(&submit->commands, NativeAdrenoAbiSubmitBuffer);
     if (total) {
        const NativeAdrenoAbiSubmitBuffer *all =
-@@ -878,7 +886,7 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
+@@ -878,7 +887,7 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
        for (unsigned at = 0; at < total; at += NativeAdrenoAbiMaxBuffers) {
           unsigned count = MIN2(total - at, (unsigned)NativeAdrenoAbiMaxBuffers);
           uint32_t chunk_fence = 0;
@@ -157,7 +173,7 @@ index f79cf32..1e0f9d1 100644
              return result;
           pthread_mutex_lock(&dw.lock);
 diff --git a/src/freedreno/vulkan/tu_queue.cc b/src/freedreno/vulkan/tu_queue.cc
-index e06cd57..d29a35a 100644
+index e06cd57..a199e20 100644
 --- a/src/freedreno/vulkan/tu_queue.cc
 +++ b/src/freedreno/vulkan/tu_queue.cc
 @@ -18,6 +18,8 @@
@@ -169,7 +185,7 @@ index e06cd57..d29a35a 100644
  static int
  tu_get_submitqueue_priority(const struct tu_physical_device *pdevice,
                              VkQueueGlobalPriorityKHR global_priority,
-@@ -487,6 +489,11 @@ queue_submit(struct vk_queue *_queue, struct vk_queue_submit *vk_submit)
+@@ -487,6 +489,12 @@ queue_submit(struct vk_queue *_queue, struct vk_queue_submit *vk_submit)
  
        submit_add_entries(device, submit, &dump_cmds, cs->entries,
                           cs->entry_count);
@@ -177,6 +193,7 @@ index e06cd57..d29a35a 100644
 +      tu_dw_pending.sysmem += cmd_buffer->dw_stats.sysmem;
 +      tu_dw_pending.blits += cmd_buffer->dw_stats.blits;
 +      tu_dw_pending.draws += cmd_buffer->dw_stats.draws;
++      tu_dw_pending.reasons |= cmd_buffer->dw_stats.reasons;
 +      tu_dw_pending.area += cmd_buffer->dw_stats.area;
  
        if (u_trace_submission_data &&
