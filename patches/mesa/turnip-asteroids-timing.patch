@@ -1,34 +1,39 @@
 diff --git a/src/freedreno/vulkan/tu_autotune.cc b/src/freedreno/vulkan/tu_autotune.cc
-index d748039..5a82e0f 100644
+index d748039..e858dce 100644
 --- a/src/freedreno/vulkan/tu_autotune.cc
 +++ b/src/freedreno/vulkan/tu_autotune.cc
-@@ -520,6 +520,8 @@ struct tu_autotune::rp_entry {
+@@ -520,6 +520,10 @@ struct tu_autotune::rp_entry {
     bool sysmem;
     uint32_t tile_count;
     uint32_t draw_count;
 +   uint64_t dw_area = 0; /* asteroids: the pass's render area in pixels (tu_dw_frag_entry) */
++   uint32_t dw_serial = 0; /* asteroids: the recording and pass it belongs to (TU_DW_TRACE) */
++   uint16_t dw_pass_no = 0;
 +   bool dw_allocated() const { return map != nullptr; }
  
     rp_entry(struct tu_device *device, rp_history_handle &&history, config_t config, uint32_t draw_count)
         : device(device), map(nullptr), history(std::move(history)), config(config), draw_count(draw_count)
-@@ -1304,6 +1306,12 @@ struct tu_autotune::rp_history {
+@@ -1304,6 +1308,13 @@ struct tu_autotune::rp_history {
        config_t entry_config = entry.config;
        config_t at_config = at.active_config.load();
  
 +      /* asteroids T60: the pass's draws and samples passed against its render area (overdraw), where TU_DW_TIME is set. */
 +      if (entry.dw_allocated()) {
 +         const bool has_samples = entry_config.test(metric_flag::SAMPLES);
-+         tu_dw_frag_entry(entry.dw_area, entry.draw_count, has_samples ? entry.get_samples_passed() : 0, has_samples, entry.sysmem);
++         tu_dw_frag_entry(entry.dw_area, entry.draw_count, has_samples ? entry.get_samples_passed() : 0, has_samples, entry.sysmem,
++                          entry.dw_serial, entry.dw_pass_no);
 +      }
 +
        if (entry_config.test(metric_flag::SAMPLES) && at_config.is_enabled(algorithm::BANDWIDTH))
           bandwidth.update(entry.get_samples_passed());
        if (entry_config.test(metric_flag::TS)) {
-@@ -1859,6 +1867,7 @@ tu_autotune::get_optimal_mode(struct tu_cmd_buffer *cmd_buffer, rp_ctx_t *rp_ctx
+@@ -1859,6 +1870,9 @@ tu_autotune::get_optimal_mode(struct tu_cmd_buffer *cmd_buffer, rp_ctx_t *rp_ctx
        }
     }
     *rp_ctx = cb_ctx.attach_rp_entry(device, history, config, rp_state->drawcall_count);
 +   (*rp_ctx)->dw_area = (uint64_t) cmd_state->render_areas[0].extent.width * cmd_state->render_areas[0].extent.height;
++   (*rp_ctx)->dw_serial = cmd_buffer->dw_serial ? cmd_buffer->dw_serial : tu_dw_serial(cmd_buffer);
++   (*rp_ctx)->dw_pass_no = cmd_buffer->dw_pass_no;
  
     if (config.test(mod_flag::PREEMPT_OPTIMIZE) && history.preempt_optimize.is_latency_sensitive()) {
        /* Try to mitigate the risk of high preemption latency by always using GMEM, which should break up any larger
@@ -100,20 +105,23 @@ index 6b9452e..d0218f5 100644
  
     trace_start_clear_depth_stencil_image(&cmd->trace, &cmd->cs, cmd,
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
-index aba5132..3dd6131 100644
+index aba5132..38c22e7 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
-@@ -7,6 +7,9 @@
+@@ -7,6 +7,12 @@
   * Copyright © 2015 Intel Corporation
   */
  
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <unistd.h>
 +#include "util/os_time.h"
 +#include "util/simple_mtx.h"
 +#include "util/u_atomic.h"
  #include "tu_cmd_buffer.h"
  
  #include "vk_common_entrypoints.h"
-@@ -3701,7 +3704,9 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+@@ -3701,7 +3707,9 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
     if (cmd->state.prim_generated_query_running_before_rp)
        tu_emit_event_write<CHIP>(cmd, cs, FD_STOP_PRIMITIVE_CTRS);
  
@@ -123,7 +131,7 @@ index aba5132..3dd6131 100644
  
     if (cmd->state.prim_generated_query_running_before_rp)
        tu_emit_event_write<CHIP>(cmd, cs, FD_START_PRIMITIVE_CTRS);
-@@ -3729,6 +3734,7 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
+@@ -3729,6 +3737,7 @@ tu6_render_tile(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
     }
  
     tu_cs_emit_call(cs, &cmd->tile_store_cs);
@@ -131,7 +139,7 @@ index aba5132..3dd6131 100644
  
     tu_clone_trace_range<CHIP>(cmd, cs, &cmd->trace, cmd->trace_renderpass_start, u_trace_end_iterator(&cmd->rp_trace));
     tu_cs_emit_wfi(cs);
-@@ -3924,6 +3930,8 @@ tu_cmd_render_tiles(struct tu_cmd_buffer *cmd,
+@@ -3924,6 +3933,8 @@ tu_cmd_render_tiles(struct tu_cmd_buffer *cmd,
     tu_cs_end(&cmd->tile_store_cs);
  
     tu6_tile_render_begin<CHIP>(cmd, &cmd->cs, rp_ctx, fdm_offsets);
@@ -140,7 +148,7 @@ index aba5132..3dd6131 100644
  
     /* Note: we reverse the order of walking the pipes and tiles on every
      * other row, to improve texture cache locality compared to raster order.
-@@ -4039,6 +4047,278 @@ tu_cmd_render_sysmem(struct tu_cmd_buffer *cmd,
+@@ -4039,6 +4050,653 @@ tu_cmd_render_sysmem(struct tu_cmd_buffer *cmd,
     tu_trace_end_render_pass<CHIP>(cmd, false);
  }
  
@@ -162,16 +170,325 @@ index aba5132..3dd6131 100644
 +static uint32_t tu_dw_size_passes[2], tu_dw_frag_n[2], tu_dw_frag_draws[2], tu_dw_frag_sysmem[2], tu_dw_frag_nosamples,
 +   tu_dw_frag_max_draws;
 +
-+/* TU_DW_TIME: absent 0 (off), "passes" 1, "tiles" 3 (passes, and GMEM passes by stage), anything else 2 (all kinds). */
++static bool tu_dw_alloc(struct tu_cmd_buffer *cmd, uint32_t dwords, struct tu_cs_memory *memory);
++
++/* TU_DW_TRACE=<letters>: p passes, d draws, s each draw's samples passed (GPU counters around every draw), b shader binaries, t GMEM
++ * passes by stage, a blits, copies, resolves and clears too; "1" is pdb. */
++enum {
++   TU_DW_TR_PASSES = 1, TU_DW_TR_DRAWS = 2, TU_DW_TR_SAMPLES = 4, TU_DW_TR_BINARIES = 8, TU_DW_TR_STAGES = 16, TU_DW_TR_ALL = 32,
++};
++static int
++tu_dw_trace_flags(void)
++{
++   static int flags = -1;
++   if (flags < 0) {
++      const char *v = getenv("TU_DW_TRACE");
++      flags = 0;
++      if (v && !strcmp(v, "1"))
++         flags = TU_DW_TR_PASSES | TU_DW_TR_DRAWS | TU_DW_TR_BINARIES;
++      for (; v && *v; v++)
++         flags |= *v == 'p' ? TU_DW_TR_PASSES : *v == 'd' ? TU_DW_TR_DRAWS : *v == 's' ? TU_DW_TR_SAMPLES | TU_DW_TR_DRAWS :
++                  *v == 'b' ? TU_DW_TR_BINARIES : *v == 't' ? TU_DW_TR_STAGES : *v == 'a' ? TU_DW_TR_ALL : 0;
++      if (flags)
++         flags |= TU_DW_TR_PASSES;   /* draws and stages are joined to their pass */
++   }
++   return flags;
++}
++
++/* TU_DW_TIME: absent 0 (off), "passes" 1, "tiles" 3 (passes, and GMEM passes by stage), anything else 2 (all kinds). Without it,
++ * TU_DW_TRACE picks the mode from its letters. */
 +static int
 +tu_dw_mode(void)
 +{
 +   static int mode = -1;
 +   if (mode < 0) {
 +      const char *v = getenv("TU_DW_TIME");
-+      mode = !v ? 0 : !strcmp(v, "passes") ? 1 : !strcmp(v, "tiles") ? 3 : 2;
++      const int trace = tu_dw_trace_flags();
++      mode = v ? (!strcmp(v, "passes") ? 1 : !strcmp(v, "tiles") ? 3 : 2) :
++             !trace ? 0 : (trace & TU_DW_TR_STAGES) ? 3 : (trace & TU_DW_TR_ALL) ? 2 : 1;
 +   }
 +   return mode;
++}
++
++/* The trace file. Every record starts with u16 type, u16 0, u32 bytes (the whole record); little endian, packed. The file starts with
++ * "TUDWTRC1", u32 the always-on counter's frequency, u32 pid, u64 the CPU's monotonic clock in ns at open. scripts/gpu-trace.py in
++ * UniXNU-asteroids reads it; a change here goes with a change there. */
++enum { TU_DW_REC_PASS = 1, TU_DW_REC_DRAW = 3, TU_DW_REC_SHADER = 4, TU_DW_REC_FRAG = 5, TU_DW_REC_NOTE = 6 };
++struct PACKED tu_dw_rec_head { uint16_t type, zero; uint32_t bytes; };
++/* A timed pass, blit, copy, resolve or clear (kind: tu_dw_kind), at its command buffer's reset. Stage stamps are 0 unless flags & 2. */
++struct PACKED tu_dw_trace_pass {
++   struct tu_dw_rec_head head;
++   uint32_t serial;
++   uint16_t pass_no;
++   uint8_t kind, flags;   /* flags: 1 HW binning, 2 stage stamps */
++   uint64_t start, end;
++   uint32_t area_px;
++   uint16_t width, height, tiles, tile_w, tile_h;
++   uint8_t loads, stores, subpasses, attachments;
++   uint32_t draws;
++   uint64_t st_begin, st_last, sum_loads, sum_draws, sum_stores;
++   struct PACKED { uint32_t format; uint8_t samples, flags, pad[2]; } att[4];   /* flags: 1 load, 2 store, 4 clear, 8 UBWC, 16 tiled */
++};
++/* A draw as recorded; samples is the GPU's count of samples passed (TU_DW_TRACE s), else ~0. */
++struct PACKED tu_dw_trace_draw {
++   struct tu_dw_rec_head head;
++   uint32_t serial;
++   uint16_t pass_no, draw_no;
++   uint64_t vs_id, fs_id;   /* the first 8 bytes of the stages' BLAKE3, as the shader records */
++   uint32_t count;          /* vertices or indices, 0 for indirect */
++   uint8_t flags;           /* 1 indexed, 2 indirect */
++   uint8_t att_count, blend_mask, write_mask, write_enables;
++   uint8_t src_color, dst_color, color_op, src_alpha, dst_alpha, alpha_op;
++   uint8_t ds;              /* 1 depth test, 2 depth write, 4 stencil test, 8 depth bounds */
++   uint8_t samples_per_px;  /* rasterization samples */
++   uint8_t pad[3];
++   uint16_t scissor[4];     /* x, y, width, height */
++   uint64_t samples;
++};
++struct tu_dw_draw_pending {
++   struct tu_dw_trace_draw rec;
++   const volatile uint64_t *samples;   /* begin, result, end: the GPU adds each tile's samples into result */
++};
++/* A shader the trace saw for the first time, with ir3's statistics, then its binary (TU_DW_TRACE b) of bin_bytes. */
++struct PACKED tu_dw_trace_shader {
++   struct tu_dw_rec_head head;
++   uint64_t id;
++   uint8_t stage, double_threadsize, subgroup_size, early_preamble;
++   int8_t max_reg, max_half_reg, max_waves, pad;
++   uint32_t constlen, size;
++   uint16_t sizedwords, instrs_count, preamble_instrs_count, nops_count, mov_count, cov_count, loops, stp_count, ldp_count, ss, sy,
++      sstall, systall, last_baryf, last_helper, pad2;
++   uint16_t instrs_per_cat[8];
++   uint32_t bin_bytes;
++};
++/* An autotune entry once the GPU has finished it: draws and samples passed for the whole pass. */
++struct PACKED tu_dw_trace_frag {
++   struct tu_dw_rec_head head;
++   uint32_t serial;
++   uint16_t pass_no;
++   uint8_t sysmem, has_samples;
++   uint32_t draws, area_px;
++   uint64_t samples;
++};
++
++static simple_mtx_t tu_dw_trace_mtx = SIMPLE_MTX_INITIALIZER;
++static uint8_t *tu_dw_tbuf;
++static size_t tu_dw_tlen;
++static int tu_dw_tfd = -2;   /* -2 not tried, -1 no file */
++static uint64_t tu_dw_twritten, tu_dw_tflushed_ns;
++static uint32_t tu_dw_tlost, tu_dw_next_serial;
++#define TU_DW_TBUF (1u << 20)
++#define TU_DW_TCAP (56ull << 20)   /* the export takes 64 MiB at most (BootLog.c, sheng-gpu-trace-export) */
++
++static void
++tu_dw_trace_flush(void)
++{
++   if (tu_dw_tfd >= 0 && tu_dw_tlen) {
++      if (write(tu_dw_tfd, tu_dw_tbuf, tu_dw_tlen) == (ssize_t) tu_dw_tlen)
++         tu_dw_twritten += tu_dw_tlen;
++      else
++         tu_dw_tlost++;
++   }
++   tu_dw_tlen = 0;
++}
++
++/* Under tu_dw_trace_mtx. The file opens on the first record: the render server's cache directory, as the Metal frontend's frames.trace. */
++static void
++tu_dw_trace_put(const void *rec, size_t bytes, const void *tail = NULL, size_t tail_bytes = 0)
++{
++   if (tu_dw_tfd == -2) {
++      tu_dw_tfd = -1;
++      static const char *const dirs[] = {"/private/var/mobile/Library/Caches/com.apple.backboardd/m2v/gpu",
++                                         "/private/var/root/Library/Caches/com.apple.backboardd/m2v/gpu"};
++      const char *path = getenv("TU_DW_TRACE_PATH");
++      char buf[160];
++      for (unsigned i = 0; !path && i < ARRAY_SIZE(dirs); i++) {
++         mkdir(dirs[i], 0755);
++         snprintf(buf, sizeof(buf), "%s/trace.bin", dirs[i]);
++         const int fd = open(buf, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
++         if (fd >= 0)
++            tu_dw_tfd = fd;
++         if (fd >= 0)
++            break;
++      }
++      if (path)
++         tu_dw_tfd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
++      tu_dw_tbuf = tu_dw_tfd >= 0 ? (uint8_t *) malloc(TU_DW_TBUF) : NULL;
++      if (!tu_dw_tbuf && tu_dw_tfd >= 0) {
++         close(tu_dw_tfd);
++         tu_dw_tfd = -1;
++      }
++      if (tu_dw_tfd >= 0) {
++         struct PACKED { char magic[8]; uint32_t freq, pid; uint64_t ns; } h = {{'T', 'U', 'D', 'W', 'T', 'R', 'C', '1'}, 19200000,
++                                                                                 (uint32_t) getpid(), os_time_get_nano()};
++         memcpy(tu_dw_tbuf, &h, sizeof(h));
++         tu_dw_tlen = sizeof(h);
++      }
++   }
++   if (tu_dw_tfd < 0)
++      return;
++   const size_t total = bytes + tail_bytes;
++   if (tu_dw_twritten + tu_dw_tlen + total > TU_DW_TCAP) {
++      tu_dw_tlost++;
++      return;
++   }
++   if (tu_dw_tlen + total > TU_DW_TBUF)
++      tu_dw_trace_flush();
++   if (total > TU_DW_TBUF) {
++      tu_dw_tlost++;
++      return;
++   }
++   memcpy(tu_dw_tbuf + tu_dw_tlen, rec, bytes);
++   if (tail_bytes)
++      memcpy(tu_dw_tbuf + tu_dw_tlen + bytes, tail, tail_bytes);
++   tu_dw_tlen += total;
++}
++
++template <typename T>
++static void
++tu_dw_rec_init(T *rec, uint16_t type)
++{
++   memset(rec, 0, sizeof(*rec));
++   rec->head.type = type;
++   rec->head.bytes = sizeof(*rec);
++}
++
++uint32_t
++tu_dw_serial(struct tu_cmd_buffer *cmd)
++{
++   if (!cmd->dw_serial)
++      cmd->dw_serial = p_atomic_inc_return(&tu_dw_next_serial);
++   return cmd->dw_serial;
++}
++
++/* Shaders seen so far, by id; under tu_dw_trace_mtx. */
++static uint64_t tu_dw_seen[4096];
++static uint64_t
++tu_dw_shader_id(const struct tu_cmd_buffer *cmd, mesa_shader_stage stage)
++{
++   uint64_t id;
++   memcpy(&id, cmd->state.program.stage_blake3[stage], sizeof(id));
++   return id;
++}
++
++static void
++tu_dw_trace_shader(const struct tu_cmd_buffer *cmd, mesa_shader_stage stage, uint64_t id)
++{
++   const struct tu_shader *shader = cmd->state.shaders[stage];
++   const struct ir3_shader_variant *v = shader ? shader->variant : NULL;
++   if (!id || !v)
++      return;
++   unsigned at = (unsigned) (id % ARRAY_SIZE(tu_dw_seen));
++   for (unsigned probe = 0; probe < ARRAY_SIZE(tu_dw_seen); probe++, at = (at + 1) % ARRAY_SIZE(tu_dw_seen)) {
++      if (tu_dw_seen[at] == id)
++         return;
++      if (!tu_dw_seen[at])
++         break;
++   }
++   if (tu_dw_seen[at])
++      return;   /* the table is full: the shader goes unrecorded */
++   tu_dw_seen[at] = id;
++   struct tu_dw_trace_shader r;
++   tu_dw_rec_init(&r, TU_DW_REC_SHADER);
++   const struct ir3_info *i = &v->info;
++   r.id = id;
++   r.stage = (uint8_t) stage;
++   r.double_threadsize = i->double_threadsize;
++   r.subgroup_size = i->subgroup_size;
++   r.early_preamble = i->early_preamble;
++   r.max_reg = i->max_reg; r.max_half_reg = i->max_half_reg; r.max_waves = i->max_waves;
++   r.constlen = i->constlen; r.size = i->size;
++   r.sizedwords = i->sizedwords; r.instrs_count = i->instrs_count; r.preamble_instrs_count = i->preamble_instrs_count;
++   r.nops_count = i->nops_count; r.mov_count = i->mov_count; r.cov_count = i->cov_count; r.loops = i->loops;
++   r.stp_count = i->stp_count; r.ldp_count = i->ldp_count; r.ss = i->ss; r.sy = i->sy; r.sstall = i->sstall; r.systall = i->systall;
++   r.last_baryf = i->last_baryf; r.last_helper = i->last_helper;
++   memcpy(r.instrs_per_cat, i->instrs_per_cat, sizeof(r.instrs_per_cat));
++   const bool binary = (tu_dw_trace_flags() & TU_DW_TR_BINARIES) && v->bin;
++   r.bin_bytes = binary ? i->sizedwords * 4u : 0;
++   r.head.bytes += r.bin_bytes;
++   tu_dw_trace_put(&r, sizeof(r), binary ? v->bin : NULL, r.bin_bytes);
++}
++
++/* At a draw's tu6_draw_common: its record from the state it draws with, and with s, the sample counter's begin (as an occlusion query
++ * inside a render pass, tu_query_pool.cc emit_begin_occlusion_query). */
++void
++tu_dw_draw_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs, bool indexed, uint32_t count)
++{
++   cmd->dw_draw_samples = NULL;
++   const int flags = tu_dw_trace_flags();
++   if (!(flags & TU_DW_TR_DRAWS))
++      return;
++   const struct vk_dynamic_graphics_state *d = &cmd->vk.dynamic_graphics_state;
++   struct tu_dw_draw_pending p;
++   tu_dw_rec_init(&p.rec, TU_DW_REC_DRAW);
++   p.samples = NULL;
++   struct tu_dw_trace_draw *r = &p.rec;
++   r->serial = tu_dw_serial(cmd);
++   r->pass_no = cmd->dw_pass_no;
++   r->draw_no = (uint16_t) MIN2(cmd->dw_pass_draws, 0xffffu);
++   cmd->dw_pass_draws++;
++   r->vs_id = tu_dw_shader_id(cmd, MESA_SHADER_VERTEX);
++   r->fs_id = tu_dw_shader_id(cmd, MESA_SHADER_FRAGMENT);
++   r->count = count;
++   r->flags = (indexed ? 1 : 0) | (count ? 0 : 2);
++   r->att_count = d->cb.attachment_count;
++   for (unsigned a = 0; a < MIN2(d->cb.attachment_count, 8u); a++)
++      r->blend_mask |= d->cb.attachments[a].blend_enable << a;
++   r->write_enables = d->cb.color_write_enables;
++   if (d->cb.attachment_count) {
++      const struct vk_color_blend_attachment_state *a = &d->cb.attachments[0];
++      r->write_mask = a->write_mask;
++      r->src_color = a->src_color_blend_factor; r->dst_color = a->dst_color_blend_factor; r->color_op = (uint8_t) a->color_blend_op;
++      r->src_alpha = a->src_alpha_blend_factor; r->dst_alpha = a->dst_alpha_blend_factor; r->alpha_op = (uint8_t) a->alpha_blend_op;
++   }
++   r->ds = (d->ds.depth.test_enable ? 1 : 0) | (d->ds.depth.write_enable ? 2 : 0) | (d->ds.stencil.test_enable ? 4 : 0) |
++           (d->ds.depth.bounds_test.enable ? 8 : 0);
++   r->samples_per_px = (uint8_t) d->ms.rasterization_samples;
++   if (d->vp.scissor_count) {
++      const VkRect2D *sc = &d->vp.scissors[0];
++      r->scissor[0] = (uint16_t) MIN2(MAX2(sc->offset.x, 0), 0xffff); r->scissor[1] = (uint16_t) MIN2(MAX2(sc->offset.y, 0), 0xffff);
++      r->scissor[2] = (uint16_t) MIN2(sc->extent.width, 0xffffu); r->scissor[3] = (uint16_t) MIN2(sc->extent.height, 0xffffu);
++   }
++   r->samples = ~0ull;
++   simple_mtx_lock(&tu_dw_trace_mtx);
++   tu_dw_trace_shader(cmd, MESA_SHADER_VERTEX, r->vs_id);
++   tu_dw_trace_shader(cmd, MESA_SHADER_FRAGMENT, r->fs_id);
++   simple_mtx_unlock(&tu_dw_trace_mtx);
++
++   struct tu_cs_memory memory;
++   if ((flags & TU_DW_TR_SAMPLES) && cmd->state.pass && cmd->device->physical_device->info->props.has_event_write_sample_count &&
++       tu_dw_alloc(cmd, 8, &memory)) {
++      p.samples = (const volatile uint64_t *) memory.map;
++      cmd->dw_draw_samples = (uint64_t *) memory.map;
++      tu_cs_emit_regs(cs, A6XX_RB_SAMPLE_COUNTER_CNTL(.copy = true));
++      tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 3);
++      tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = ZPASS_DONE, .write_sample_count = true).value);
++      tu_cs_emit_qw(cs, memory.iova);
++      cmd->state.rp.has_zpass_done_sample_count_write_in_rp = true;
++      /* the end event finds the slot by its address */
++      p.rec.samples = memory.iova;
++   }
++   util_dynarray_append(&cmd->dw_draws, p);
++}
++
++/* After the draw packet: the sample counter's end, which adds this tile's samples to the slot's result (emit_end_occlusion_query). */
++void
++tu_dw_draw_end(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
++{
++   if (!cmd->dw_draw_samples)
++      return;
++   struct tu_dw_draw_pending *p = util_dynarray_top_ptr(&cmd->dw_draws, struct tu_dw_draw_pending);
++   tu_cs_emit_regs(cs, A6XX_RB_SAMPLE_COUNTER_CNTL(.copy = true));
++   tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 3);
++   tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = ZPASS_DONE, .write_sample_count = true, .sample_count_end_offset = true,
++                                    .write_accum_sample_count_diff = true).value);
++   tu_cs_emit_qw(cs, p->rec.samples);
++   tu_cs_emit_wfi(cs);
++   if (cmd->device->physical_device->info->chip >= 8) {
++      tu_cs_emit_pkt7(cs, CP_BARRIER, 1);
++      tu_cs_emit(cs, 1);
++   }
++   cmd->dw_draw_samples = NULL;
 +}
 +
 +/* T58: the GPU writes these, so they come from the sub stream's GPU-writable memory; command memory is mapped GPU read-only
@@ -226,10 +543,20 @@ index aba5132..3dd6131 100644
 +}
 +
 +void
-+tu_dw_frag_entry(uint64_t area_px, uint32_t draws, uint64_t samples, bool has_samples, bool sysmem)
++tu_dw_frag_entry(uint64_t area_px, uint32_t draws, uint64_t samples, bool has_samples, bool sysmem, uint32_t serial,
++                 uint16_t pass_no)
 +{
 +   if (!tu_dw_mode())
 +      return;
++   if (tu_dw_trace_flags() && serial) {
++      struct tu_dw_trace_frag r;
++      tu_dw_rec_init(&r, TU_DW_REC_FRAG);
++      r.serial = serial; r.pass_no = pass_no; r.sysmem = sysmem; r.has_samples = has_samples;
++      r.draws = draws; r.area_px = (uint32_t) MIN2(area_px, 0xffffffffull); r.samples = samples;
++      simple_mtx_lock(&tu_dw_trace_mtx);
++      tu_dw_trace_put(&r, sizeof(r));
++      simple_mtx_unlock(&tu_dw_trace_mtx);
++   }
 +   const unsigned large = area_px >= TU_DW_LARGE_PX;
 +   simple_mtx_lock(&tu_dw_mtx);
 +   if (!has_samples) {
@@ -306,9 +633,65 @@ index aba5132..3dd6131 100644
 +   tu_dw_timestamp(cmd, cs, cmd->dw_slots[slot].iova + 8, true);
 +}
 +
++/* TU_DW_TRACE: the recording's slots and draws as records, once the GPU is done with them. */
++static void
++tu_dw_trace_collect(struct tu_cmd_buffer *cmd)
++{
++   const int flags = tu_dw_trace_flags();
++   if (!flags)
++      return;
++   simple_mtx_lock(&tu_dw_trace_mtx);
++   for (unsigned i = 0; i < cmd->dw_slot_count; i++) {
++      const struct tu_dw_slot *sl = &cmd->dw_slots[i];
++      const volatile uint32_t *map = sl->map;
++      struct tu_dw_trace_pass r;
++      tu_dw_rec_init(&r, TU_DW_REC_PASS);
++      r.serial = cmd->dw_serial; r.pass_no = sl->pass_no; r.kind = sl->kind;
++      r.start = (uint64_t) map[1] << 32 | map[0]; r.end = (uint64_t) map[3] << 32 | map[2];
++      r.area_px = sl->area_px; r.width = sl->width; r.height = sl->height;
++      r.tiles = (uint16_t) MIN2(sl->tiles, 0xffffu); r.tile_w = sl->tile_w; r.tile_h = sl->tile_h;
++      r.loads = sl->loads; r.stores = sl->stores; r.subpasses = sl->subpasses; r.attachments = sl->attachments;
++      r.draws = sl->draws;
++      r.flags = sl->binning ? 1 : 0;
++      if (sl->rp_map) {
++         const volatile uint64_t *rp = sl->rp_map;
++         r.flags |= 2;
++         r.st_begin = rp[TU_DW_RP_BEGIN]; r.st_last = rp[TU_DW_RP_STORES];
++         r.sum_loads = rp[TU_DW_RP_SUM_LOADS]; r.sum_draws = rp[TU_DW_RP_SUM_DRAWS]; r.sum_stores = rp[TU_DW_RP_SUM_STORES];
++      }
++      for (unsigned a = 0; a < 4; a++) {
++         r.att[a].format = sl->att[a].format; r.att[a].samples = sl->att[a].samples; r.att[a].flags = sl->att[a].flags;
++      }
++      if (sl->kind == TU_DW_PASS_GMEM || sl->kind == TU_DW_PASS_SYSMEM || (flags & TU_DW_TR_ALL))
++         tu_dw_trace_put(&r, sizeof(r));
++   }
++   util_dynarray_foreach (&cmd->dw_draws, struct tu_dw_draw_pending, p) {
++      p->rec.serial = cmd->dw_serial;
++      p->rec.samples = p->samples ? p->samples[1] : ~0ull;
++      tu_dw_trace_put(&p->rec, sizeof(p->rec));
++   }
++   const uint64_t now = os_time_get_nano();
++   if (now - tu_dw_tflushed_ns >= 1000000000ull) {
++      if (tu_dw_tlost) {
++         struct PACKED { struct tu_dw_rec_head head; uint32_t lost; } note = {{TU_DW_REC_NOTE, 0, 8}, tu_dw_tlost};
++         tu_dw_tlost = 0;
++         tu_dw_trace_put(&note, sizeof(note));
++      }
++      tu_dw_trace_flush();
++      tu_dw_tflushed_ns = now;
++   }
++   simple_mtx_unlock(&tu_dw_trace_mtx);
++}
++
 +void
 +tu_dw_time_collect(struct tu_cmd_buffer *cmd)
 +{
++   tu_dw_trace_collect(cmd);
++   util_dynarray_clear(&cmd->dw_draws);
++   cmd->dw_draw_samples = NULL;
++   cmd->dw_serial = 0;
++   cmd->dw_pass_no = 0;
++   cmd->dw_pass_draws = 0;
 +   cmd->dw_rp_map = NULL;
 +   cmd->dw_rp_tiles = 0;
 +   if (!cmd->dw_slot_count)
@@ -419,7 +802,7 @@ index aba5132..3dd6131 100644
  template <chip CHIP>
  void
  tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
-@@ -4051,6 +4331,7 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
+@@ -4051,6 +4709,7 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
  
     tu_autotune::rp_ctx_t rp_ctx = NULL;
     const bool sysmem = use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key);
@@ -427,14 +810,40 @@ index aba5132..3dd6131 100644
     cmd_buffer->dw_stats.passes++;
     cmd_buffer->dw_stats.sysmem += sysmem;
     if (sysmem) {
-@@ -4073,6 +4354,26 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
+@@ -4073,6 +4732,52 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
        tu_cmd_render_sysmem<CHIP>(cmd_buffer, rp_ctx);
     else
        tu_cmd_render_tiles<CHIP>(cmd_buffer, rp_ctx, fdm_offsets);
 +   tu_dw_time_end(cmd_buffer, &cmd_buffer->cs, dw_slot);
-+   if (dw_slot < cmd_buffer->dw_slot_count)
-+      cmd_buffer->dw_slots[dw_slot].area_px =
-+         cmd_buffer->state.render_areas[0].extent.width * cmd_buffer->state.render_areas[0].extent.height;
++   if (dw_slot < cmd_buffer->dw_slot_count) {
++      struct tu_dw_slot *sl = &cmd_buffer->dw_slots[dw_slot];
++      const VkExtent2D extent = cmd_buffer->state.render_areas[0].extent;
++      const struct tu_render_pass *pass = cmd_buffer->state.pass;
++      sl->area_px = extent.width * extent.height;
++      sl->width = (uint16_t) MIN2(extent.width, 0xffffu);
++      sl->height = (uint16_t) MIN2(extent.height, 0xffffu);
++      sl->pass_no = cmd_buffer->dw_pass_no;
++      sl->draws = cmd_buffer->dw_pass_draws;
++      if (!sysmem) {
++         sl->tile_w = (uint16_t) cmd_buffer->state.tiling->tile0.width;
++         sl->tile_h = (uint16_t) cmd_buffer->state.tiling->tile0.height;
++      }
++      sl->attachments = (uint8_t) MIN2(pass->attachment_count, 255u);
++      for (uint32_t a = 0; a < MIN2(pass->attachment_count, 4u); a++) {
++         const struct tu_render_pass_attachment *att = &pass->attachments[a];
++         const struct tu_image_view *view = cmd_buffer->state.attachments ? cmd_buffer->state.attachments[a] : NULL;
++         sl->att[a].format = att->format;
++         sl->att[a].samples = (uint8_t) att->samples;
++         sl->att[a].flags = (att->load || att->load_stencil ? 1 : 0) | (att->store || att->store_stencil ? 2 : 0) |
++                            (att->clear_mask ? 4 : 0);
++         if (view && view->image)
++            sl->att[a].flags |= (view->image->layout[0].ubwc ? 8 : 0) | (view->image->layout[0].tile_mode ? 16 : 0);
++      }
++   }
++   if (tu_dw_trace_flags())
++      tu_dw_serial(cmd_buffer);
++   cmd_buffer->dw_pass_no++;
++   cmd_buffer->dw_pass_draws = 0;
 +   if (!sysmem && dw_slot < cmd_buffer->dw_slot_count && cmd_buffer->dw_rp_map) {
 +      struct tu_dw_slot *sl = &cmd_buffer->dw_slots[dw_slot];
 +      const struct tu_render_pass *pass = cmd_buffer->state.pass;
@@ -454,15 +863,16 @@ index aba5132..3dd6131 100644
  }
  
  static void tu_reset_render_pass(struct tu_cmd_buffer *cmd_buffer)
-@@ -4172,6 +4473,7 @@ tu_cmd_buffer_destroy(struct vk_command_buffer *vk_cmd_buffer)
+@@ -4172,6 +4877,8 @@ tu_cmd_buffer_destroy(struct vk_command_buffer *vk_cmd_buffer)
     struct tu_cmd_buffer *cmd_buffer =
        container_of(vk_cmd_buffer, struct tu_cmd_buffer, vk);
  
 +   tu_dw_time_collect(cmd_buffer);
++   util_dynarray_fini(&cmd_buffer->dw_draws);
     tu_cs_finish(&cmd_buffer->cs);
     tu_cs_finish(&cmd_buffer->draw_cs);
     tu_cs_finish(&cmd_buffer->tile_store_cs);
-@@ -4248,6 +4550,7 @@ tu_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
+@@ -4248,6 +4955,7 @@ tu_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
     struct tu_cmd_buffer *cmd_buffer =
        container_of(vk_cmd_buffer, struct tu_cmd_buffer, vk);
  
@@ -470,7 +880,7 @@ index aba5132..3dd6131 100644
     VkResult status_check_result = VK_SUCCESS;
     if (TU_DEBUG_START(CHECK_CMD_BUFFER_STATUS))
        status_check_result = tu_cmd_buffer_status_check_idle(cmd_buffer);
-@@ -6895,6 +7198,8 @@ tu_emit_subpass_begin(struct tu_cmd_buffer *cmd)
+@@ -6895,6 +7603,8 @@ tu_emit_subpass_begin(struct tu_cmd_buffer *cmd)
     }
  
     tu_emit_resolve_group<CHIP>(cmd, &cmd->draw_cs, &resolve_group);
@@ -479,11 +889,91 @@ index aba5132..3dd6131 100644
  
     tu6_emit_zs<CHIP>(cmd, cmd->state.subpass, &cmd->draw_cs);
     tu6_emit_mrt<CHIP>(cmd, cmd->state.subpass, &cmd->draw_cs);
+@@ -8330,6 +9040,7 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
+                 uint32_t draw_count)
+ {
+    cmd->dw_stats.draws++;
++   tu_dw_draw_begin(cmd, cs, indexed, draw_count);
+    const struct tu_program_state *program = &cmd->state.program;
+    struct tu_render_pass_state *rp = &cmd->state.rp;
+ 
+@@ -8803,6 +9514,7 @@ tu_CmdDraw(VkCommandBuffer commandBuffer,
+    tu_cs_emit(cs, instanceCount);
+    tu_cs_emit(cs, vertexCount);
+ 
++   tu_dw_draw_end(cmd, cs);
+    trace_end_draw(&cmd->rp_trace, cs);
+ }
+ TU_GENX(tu_CmdDraw);
+@@ -8852,6 +9564,7 @@ tu_CmdDrawMultiEXT(VkCommandBuffer commandBuffer,
+    }
+ 
+    if (i != 0)
++      tu_dw_draw_end(cmd, cs);
+       trace_end_draw(&cmd->rp_trace, cs);
+ }
+ TU_GENX(tu_CmdDrawMultiEXT);
+@@ -8880,6 +9593,7 @@ tu_CmdDrawIndexed(VkCommandBuffer commandBuffer,
+    tu_cs_emit_qw(cs, cmd->state.index_va);
+    tu_cs_emit(cs, cmd->state.max_index_count);
+ 
++   tu_dw_draw_end(cmd, cs);
+    trace_end_draw(&cmd->rp_trace, cs);
+ }
+ TU_GENX(tu_CmdDrawIndexed);
+@@ -8934,6 +9648,7 @@ tu_CmdDrawMultiIndexedEXT(VkCommandBuffer commandBuffer,
+    }
+ 
+    if (i != 0)
++      tu_dw_draw_end(cmd, cs);
+       trace_end_draw(&cmd->rp_trace, cs);
+ }
+ TU_GENX(tu_CmdDrawMultiIndexedEXT);
+@@ -8979,6 +9694,7 @@ tu_CmdDrawIndirect(VkCommandBuffer commandBuffer,
+    tu_cs_emit_qw(cs, vk_buffer_address(&buf->vk, offset));
+    tu_cs_emit(cs, stride);
+ 
++   tu_dw_draw_end(cmd, cs);
+    trace_end_draw(&cmd->rp_trace, cs);
+ }
+ TU_GENX(tu_CmdDrawIndirect);
+@@ -9012,6 +9728,7 @@ tu_CmdDrawIndexedIndirect(VkCommandBuffer commandBuffer,
+    tu_cs_emit_qw(cs, vk_buffer_address(&buf->vk, offset));
+    tu_cs_emit(cs, stride);
+ 
++   tu_dw_draw_end(cmd, cs);
+    trace_end_draw(&cmd->rp_trace, cs);
+ }
+ TU_GENX(tu_CmdDrawIndexedIndirect);
+@@ -9051,6 +9768,7 @@ tu_CmdDrawIndirectCount(VkCommandBuffer commandBuffer,
+    tu_cs_emit_qw(cs, vk_buffer_address(&count_buf->vk, countBufferOffset));
+    tu_cs_emit(cs, stride);
+ 
++   tu_dw_draw_end(cmd, cs);
+    trace_end_draw(&cmd->rp_trace, cs);
+ }
+ TU_GENX(tu_CmdDrawIndirectCount);
+@@ -9087,6 +9805,7 @@ tu_CmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer,
+    tu_cs_emit_qw(cs, vk_buffer_address(&count_buf->vk, countBufferOffset));
+    tu_cs_emit(cs, stride);
+ 
++   tu_dw_draw_end(cmd, cs);
+    trace_end_draw(&cmd->rp_trace, cs);
+ }
+ TU_GENX(tu_CmdDrawIndexedIndirectCount);
+@@ -9129,6 +9848,7 @@ tu_CmdDrawIndirectByteCountEXT(VkCommandBuffer commandBuffer,
+    tu_cs_emit(cs, counterOffset);
+    tu_cs_emit(cs, vertexStride);
+ 
++   tu_dw_draw_end(cmd, cs);
+    trace_end_draw(&cmd->rp_trace, cs);
+ }
+ TU_GENX(tu_CmdDrawIndirectByteCountEXT);
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.h b/src/freedreno/vulkan/tu_cmd_buffer.h
-index 6078c3d..9ed2723 100644
+index 6078c3d..e2e6948 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.h
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.h
-@@ -664,10 +664,56 @@ struct tu_dw_stats {
+@@ -664,10 +664,75 @@ struct tu_dw_stats {
  };
  extern struct tu_dw_stats tu_dw_pending;
  
@@ -504,6 +994,11 @@ index 6078c3d..9ed2723 100644
 +   uint64_t *rp_map;
 +   uint32_t tiles, tile_px, area_px;
 +   uint8_t binning, loads, stores, subpasses;
++   /* TU_DW_TRACE: the pass record's other fields (tu_dw_trace_pass) */
++   uint16_t pass_no, width, height, tile_w, tile_h;
++   uint32_t draws;
++   uint8_t attachments;
++   struct { uint32_t format; uint8_t samples, flags; } att[4];
 +};
 +/* TU_DW_TIME=tiles: a GMEM pass's stage record, 64-bit always-on stamps written by the GPU: */
 +enum tu_dw_rp {
@@ -526,7 +1021,16 @@ index 6078c3d..9ed2723 100644
 +void tu_dw_rp_loads(struct tu_cmd_buffer *cmd);
 +void tu_dw_rp_stamp(struct tu_cmd_buffer *cmd, struct tu_cs *cs, unsigned which);
 +void tu_dw_rp_tile_end(struct tu_cmd_buffer *cmd, struct tu_cs *cs);
-+void tu_dw_frag_entry(uint64_t area_px, uint32_t draws, uint64_t samples, bool has_samples, bool sysmem);
++void tu_dw_frag_entry(uint64_t area_px, uint32_t draws, uint64_t samples, bool has_samples, bool sysmem, uint32_t serial,
++                      uint16_t pass_no);
++
++/* asteroids trace (TU_DW_TRACE, tu_cmd_buffer.cc): binary records of every pass, draw and shader written to a file in the render
++ * server's cache directory, which the kernel exports with the boot log (sheng-gpu-trace-export), so a question about them is answered
++ * by scripts/gpu-trace.py on the host instead of a new build. */
++struct tu_dw_draw_pending;
++uint32_t tu_dw_serial(struct tu_cmd_buffer *cmd);
++void tu_dw_draw_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs, bool indexed, uint32_t count);
++void tu_dw_draw_end(struct tu_cmd_buffer *cmd, struct tu_cs *cs);
 +
  struct tu_cmd_buffer
  {
@@ -537,6 +1041,11 @@ index 6078c3d..9ed2723 100644
 +   uint64_t *dw_rp_map;   /* the current pass's stage record (TU_DW_TIME=tiles), from its first subpass to tu_cmd_render */
 +   uint64_t dw_rp_iova;
 +   uint32_t dw_rp_tiles;
++   uint32_t dw_serial;              /* TU_DW_TRACE: this recording's number, 0 until its first record */
++   uint16_t dw_pass_no;             /* render passes ended in this recording */
++   uint32_t dw_pass_draws;          /* draws recorded in the current pass */
++   struct util_dynarray dw_draws;   /* struct tu_dw_draw_pending, written at tu_dw_time_collect */
++   uint64_t *dw_draw_samples;       /* the open draw's sample counter (TU_DW_TRACE with s), until tu_dw_draw_end */
  
     struct tu_device *device;
  
