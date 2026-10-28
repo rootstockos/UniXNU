@@ -66,7 +66,7 @@ index 6b9452e..d0218f5 100644
  
     trace_start_clear_depth_stencil_image(&cmd->trace, &cmd->cs, cmd,
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
-index aba5132..77b22d7 100644
+index aba5132..890154e 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
 @@ -7,6 +7,9 @@
@@ -79,7 +79,7 @@ index aba5132..77b22d7 100644
  #include "tu_cmd_buffer.h"
  
  #include "vk_common_entrypoints.h"
-@@ -4039,6 +4042,93 @@ tu_cmd_render_sysmem(struct tu_cmd_buffer *cmd,
+@@ -4039,6 +4042,100 @@ tu_cmd_render_sysmem(struct tu_cmd_buffer *cmd,
     tu_trace_end_render_pass<CHIP>(cmd, false);
  }
  
@@ -109,6 +109,13 @@ index aba5132..77b22d7 100644
 +unsigned
 +tu_dw_time_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs, unsigned kind)
 +{
++   /* Only where TU_DW_TIME is set (the asteroids Metal plugin sets it in the render server with asteroids-tu-time=1): T55 timed every
++    * process and the wallpaper poster extensions aborted on every launch. */
++   static int enabled = -1;
++   if (enabled < 0)
++      enabled = getenv("TU_DW_TIME") != NULL;
++   if (!enabled)
++      return ~0u;
 +   if (cmd->dw_slot_count >= TU_DW_MAX_SLOTS) {
 +      p_atomic_inc(&tu_dw_dropped);
 +      return ~0u;
@@ -173,7 +180,7 @@ index aba5132..77b22d7 100644
  template <chip CHIP>
  void
  tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
-@@ -4051,6 +4141,7 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
+@@ -4051,6 +4148,7 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
  
     tu_autotune::rp_ctx_t rp_ctx = NULL;
     const bool sysmem = use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key);
@@ -181,7 +188,7 @@ index aba5132..77b22d7 100644
     cmd_buffer->dw_stats.passes++;
     cmd_buffer->dw_stats.sysmem += sysmem;
     if (sysmem) {
-@@ -4073,6 +4164,7 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
+@@ -4073,6 +4171,7 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
        tu_cmd_render_sysmem<CHIP>(cmd_buffer, rp_ctx);
     else
        tu_cmd_render_tiles<CHIP>(cmd_buffer, rp_ctx, fdm_offsets);
@@ -189,7 +196,7 @@ index aba5132..77b22d7 100644
  }
  
  static void tu_reset_render_pass(struct tu_cmd_buffer *cmd_buffer)
-@@ -4172,6 +4264,7 @@ tu_cmd_buffer_destroy(struct vk_command_buffer *vk_cmd_buffer)
+@@ -4172,6 +4271,7 @@ tu_cmd_buffer_destroy(struct vk_command_buffer *vk_cmd_buffer)
     struct tu_cmd_buffer *cmd_buffer =
        container_of(vk_cmd_buffer, struct tu_cmd_buffer, vk);
  
@@ -197,7 +204,7 @@ index aba5132..77b22d7 100644
     tu_cs_finish(&cmd_buffer->cs);
     tu_cs_finish(&cmd_buffer->draw_cs);
     tu_cs_finish(&cmd_buffer->tile_store_cs);
-@@ -4248,6 +4341,7 @@ tu_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
+@@ -4248,6 +4348,7 @@ tu_reset_cmd_buffer(struct vk_command_buffer *vk_cmd_buffer,
     struct tu_cmd_buffer *cmd_buffer =
        container_of(vk_cmd_buffer, struct tu_cmd_buffer, vk);
  
