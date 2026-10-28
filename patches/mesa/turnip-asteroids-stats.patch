@@ -131,11 +131,11 @@ index 17bebeb..6078c3d 100644
     struct tu_device *device;
  
 diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
-index f79cf32..ad687d0 100644
+index 5d629cc..de921ab 100644
 --- a/src/freedreno/vulkan/tu_knl_darwin.cc
 +++ b/src/freedreno/vulkan/tu_knl_darwin.cc
-@@ -823,11 +823,12 @@ darwin_note_fence(uint32_t fence)
-  * are taken. */
+@@ -1268,11 +1268,12 @@ darwin_note_fence(uint32_t fence)
+  * waits for ring space) it waits for this client's oldest job, or yields when none is in flight. */
  static VkResult
  darwin_submit_chunk(struct tu_queue *queue, const NativeAdrenoAbiSubmitBuffer *entries,
 -                    unsigned count, uint32_t *fence)
@@ -148,7 +148,7 @@ index f79cf32..ad687d0 100644
     req.queue = 0;
     for (unsigned i = 0; i < count; i++)
        req.buffers[i] = entries[i];
-@@ -871,6 +872,14 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
+@@ -1319,6 +1320,14 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
     }
  
     uint32_t fence = 0;
@@ -163,7 +163,7 @@ index f79cf32..ad687d0 100644
     const unsigned total = util_dynarray_num_elements(&submit->commands, NativeAdrenoAbiSubmitBuffer);
     if (total) {
        const NativeAdrenoAbiSubmitBuffer *all =
-@@ -878,7 +887,7 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
+@@ -1326,7 +1335,7 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
        for (unsigned at = 0; at < total; at += NativeAdrenoAbiMaxBuffers) {
           unsigned count = MIN2(total - at, (unsigned)NativeAdrenoAbiMaxBuffers);
           uint32_t chunk_fence = 0;

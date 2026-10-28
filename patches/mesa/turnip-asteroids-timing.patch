@@ -1122,10 +1122,10 @@ index 6078c3d..d81c937 100644
     struct tu_device *device;
  
 diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
-index ad687d0..381aa5e 100644
+index de921ab..fab8bd2 100644
 --- a/src/freedreno/vulkan/tu_knl_darwin.cc
 +++ b/src/freedreno/vulkan/tu_knl_darwin.cc
-@@ -88,6 +88,19 @@ dw_call(uint32_t method, const void *in, size_t in_size, void *out,
+@@ -154,6 +154,19 @@ dw_call(uint32_t method, const void *in, size_t in_size, void *out,
                                      out_size ? &out_bytes : NULL);
  }
  
@@ -1145,7 +1145,7 @@ index ad687d0..381aa5e 100644
  /* Finds an admitted selector: the driver answers a tunnel probe (method 0xffffffff) with success for every selector the sandbox lets through. */
  static bool
  dw_probe_selector(void)
-@@ -147,6 +160,7 @@ dw_open_connection(struct tu_instance *instance)
+@@ -213,6 +226,7 @@ dw_open_connection(struct tu_instance *instance)
     dw.open = true;
     dw.inflight_count = 0;
     dw.last_fence = 0;
