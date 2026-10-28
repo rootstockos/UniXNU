@@ -39,10 +39,10 @@ legacy_page = "preserve"
 soc = "SM8250"
 summary = "Format 2 board, DTS and SM8250 shared support; kernel and image integration pending"
 repository_id = 1432549428
-revision = "695a35bd11337a27473a1ef6687977c0527b6878"
+revision = "0fb1ff33fd61535b5a6b7e4d007c8dcd2e4345bf"
 board = "alioth"
 os_profile = "ipados-17.7.11-21H461"
-components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "ShengUfs", "VirtioMmioBlock", "RamBlock", "GopFramebuffer", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState", "QcomXnuUsbDebug"]
+components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "ShengUfs", "ShengHidInput", "VirtioMmioBlock", "RamBlock", "GopFramebuffer", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState", "QcomXnuUsbDebug"]
 record_state = "available"
 
 [[device]]
@@ -114,12 +114,15 @@ name = "amethyst-bluedmc-amethyst"
 repository = "BluedMC-Amethyst/UniXNU-amethyst"
 title = "Xiaomi Redmi Note 14 Pro+ 5G (BluedMC-Amethyst)"
 title_zh = "Xiaomi Redmi Note 14 Pro+ 5G (BluedMC-Amethyst)"
-format = 1
+format = 2
 legacy_page = "link"
 repository_id = 1431901118
-revision = "ebfabed8b0829082b468640b3333da69a54e66ad"
+revision = "d2fea9356c9e8b4298c07733aa2dbb7d9221a105"
 board = "amethyst"
 soc = "SM7635"
+os_profile = "ipados-17.7.11-21H461"
+components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "RamBlock", "XnuPrelink", "DarwinBoot", "AppleKeyStoreState", "ShengUfs"]
+record_state = "missing"
 
 [[device]]
 name = "asteroids"
@@ -131,7 +134,7 @@ legacy_page = "preserve"
 soc = "SM7635"
 summary = "Eight CPUs, UFS root and userland; display presentation pending"
 repository_id = 1429664198
-revision = "caf9b5b1285f044e87930342b00721687ccb85ac"
+revision = "bd618af4eb9377dafaa512a07c2991c8e2469444"
 board = "asteroids"
 os_profile = "ipados-17.7.11-21H461"
 components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "RamBlock", "XnuPrelink", "DarwinBoot", "GopFramebuffer", "AppleKeyStoreState", "QcomGeniSpi", "AdrenoPM4", "ArmSmmu4K", "AdrenoFirmware", "Adreno740", "ShengUfs", "ShengHidInput", "Sm7635Platform", "QcomPmicRtc"]
@@ -311,7 +314,7 @@ legacy_page = "preserve"
 soc = "SDM660"
 summary = "eMMC-backed mockfs root and EL0 test init; APFS probes in development"
 repository_id = 1431566463
-revision = "c9d8aba0050451f1fe52614db8e6c442d9260e29"
+revision = "1dff2f2101a282e523f9774fe1df4d9777624cfd"
 board = "clover"
 
 [[device]]
@@ -409,11 +412,11 @@ title_zh = "Xiaomi Redmi Pad Pro (dizi); ruan unverified"
 format = 2
 legacy_page = "link"
 repository_id = 1434414153
-revision = "ebde9fbea275b70e3081b205c9a6ba7b825cdcd9"
+revision = "9681d4bffb567a478f94808c3459a0fc63a61d54"
 board = "dizi"
 soc = "SM7435"
 os_profile = ""
-components = []
+components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "XnuPrelink", "DarwinBoot"]
 record_state = "invalid"
 record_error = "vildangil/UniXNU-Dizi-Ruan: device.os_profile must match board.toml"
 
@@ -427,7 +430,7 @@ legacy_page = "preserve"
 soc = "crosvm-gunyah"
 summary = "iPadOS 17 home screen; Metal widgets and icons; keychain and Bluetooth; virtio-net works"
 repository_id = 1428005836
-revision = "389d05c5aefdd8b37c3bfea61a3ac0cba0cbf699"
+revision = "8d4d4930b0fe74537cc760e5c6d410d27d187416"
 board = "droidvm"
 
 [[device]]
@@ -464,7 +467,7 @@ legacy_page = "preserve"
 soc = "UMS9621"
 summary = "Format 2 UMS9621 configuration and early-entry/MMU probes"
 repository_id = 1432985388
-revision = "0bd6fbd29954697c884766e09f7e6c701b8f0dba"
+revision = "d8fa22797286de908e5fcd55cbacaf4857e9e519"
 board = "e5"
 os_profile = "ipados-17.7.11-21H461"
 components = ["ArmDTPlatform", "ArmCpu", "SoftwareAES", "RamBlock", "XnuPrelink"]
@@ -866,7 +869,7 @@ legacy_page = "preserve"
 soc = "SM8750"
 summary = "Hello, six CPUs and physical root; touch and GPU pending"
 repository_id = 1428554171
-revision = "e68a630b9011cb755dbb19ab963bd10bb990f4fb"
+revision = "5a88292ff40348c608f2815b6d91ed4e2a6d31af"
 board = "hummer"
 
 [[device]]
@@ -924,7 +927,7 @@ title_zh = "Xiaomi 13 Ultra - XNU (iOS 18) (markakash)"
 format = 1
 legacy_page = "link"
 repository_id = 1433345906
-revision = "02ae393e19247e42a6722e5b4970dc239f0c3ffd"
+revision = "2d18690628a88291aa216656c9df5eb3045ef65c"
 board = "ishtar"
 soc = "SM8550"
 
@@ -1087,7 +1090,7 @@ title_zh = "Microsoft Lumia 950 — P1 build research (TwisstedToast)"
 format = 1
 legacy_page = "link"
 repository_id = 1434782425
-revision = "4cbb3b21bf43bc55828ab98fa6aa633e369e0df6"
+revision = "4fd1fc85f698cba4dff5fcff618c70f003fcfdc3"
 board = "lumia950"
 soc = "MSM8992"
 
@@ -1165,7 +1168,7 @@ title_zh = "Redmi K60 (mondrian/SM8475): UniXNU UEFI bring-up"
 format = 1
 legacy_page = "link"
 repository_id = 1435726864
-revision = "c25caf318420009efa8234cf3f771daadccc8998"
+revision = "27abbe80868e81b86c93d209057dd60b1fa28c4e"
 board = "mondrian"
 soc = "SM8475"
 
@@ -1345,7 +1348,7 @@ legacy_page = "preserve"
 soc = "SM8850"
 summary = "GPU-composited UI and apps, touch and CPU frequency control; audio/network pending"
 repository_id = 1428693704
-revision = "81b71b1bfc7fdbfdd4c33cdc0e79f65f0c438177"
+revision = "9954cf256d67d34989e75cfdd98b27ce24db2f30"
 
 [[device]]
 name = "pdx203"
@@ -1532,13 +1535,28 @@ name = "pong"
 repository = "Chengdong-Yu/UniXNU-pong"
 title = "Nothing Phone (2) (pong)"
 title_zh = "Nothing Phone (2)（pong）"
-format = 1
+format = 2
 legacy_page = "preserve"
 soc = "SM8475"
 summary = "iOS 16.6.1 home screen with display and touch; UFS and GPU partial"
 repository_id = 1431008794
-revision = "ab74f075320fe54eee24d5d150386e5b0f0f427f"
+revision = "ffdad781cb16b42a1fb5c984f77998253b821d8c"
 board = "pong"
+os_profile = "ipados-18.7.10-22H374"
+components = ["PongPlatform24"]
+record_state = "available"
+
+[[device]]
+name = "pong-hxzbaka"
+repository = "hxzbaka/UniXNU-pong"
+title = "Nothing Phone (2): UniXNU UEFI bring-up (hxzbaka)"
+title_zh = "Nothing Phone (2): UniXNU UEFI bring-up (hxzbaka)"
+format = 1
+legacy_page = "link"
+repository_id = 1433163770
+revision = "b3526408e35aa74fcc68747f557eb79766b20af0"
+board = "pong"
+soc = "SM8475"
 
 [[device]]
 name = "pong-y3d4"
@@ -1784,7 +1802,7 @@ title_zh = "Xiaomi 14 Pro 23116PN5BC"
 format = 1
 legacy_page = "link"
 repository_id = 1435925007
-revision = "2a64266333443e9c001ee3e66ea76cf0f62b2a62"
+revision = "de82d0f235468b6f90887128f2cbf0813a1bf337"
 board = "shennong"
 soc = "SM8650"
 
@@ -1812,7 +1830,7 @@ title_zh = "Xiaomi Mi 8 SE (HuajiFruit)"
 format = 2
 legacy_page = "link"
 repository_id = 1435767913
-revision = "86fe9ffbc700915e006fce11474b0d277f0d7dc3"
+revision = "b9922c1fe7442009f0c44e78a57366c993fad772"
 board = "sirius"
 soc = "SDM710"
 os_profile = "ipados-17.7.11-21H461"
@@ -1844,7 +1862,7 @@ legacy_page = "preserve"
 soc = "SM7325"
 summary = "Desktop, touch, keys, brightness, shutdown, USB diagnostics and persistent Data"
 repository_id = 1432008418
-revision = "77eb481860c4212443305d28720e3d64b5cddaa7"
+revision = "efd0a7519b61e769e19658930065ba42e1a0e1e3"
 board = "gts7fewifi"
 os_profile = "ipados-17.7.11-21H461"
 components = ["ArmDTPlatform", "ArmCpu", "DarwinBoot", "NativePrelink", "VerifiedRoot", "VirtioMmioBlock", "SoftwareAES", "NativeUfs", "NativeRamBlock", "NativeMobileDisplay", "NativeGeniSpi", "NativeFocaltechTouch", "NativeQcomTsens", "NativeQcomSpmi", "NativePmicKeys", "NativeGeniI2c", "NativeQcomDsi", "NativeUsbDebug", "NativeUsbNetwork", "device", "Adreno6xx", "AdrenoMetal", "EarlyEntry"]
@@ -1872,6 +1890,18 @@ format = 1
 legacy_page = "link"
 repository_id = 1435356394
 revision = "43e476e40e4a79b06e771b50a73765ef33295cf2"
+board = "songyuan"
+soc = "SM8850"
+
+[[device]]
+name = "songyuan-wukawl"
+repository = "WUKAWL/songyuan-device"
+title = "Redmi K90 Pro Max (songyuan) (WUKAWL)"
+title_zh = "Redmi K90 Pro Max (songyuan) (WUKAWL)"
+format = 1
+legacy_page = "link"
+repository_id = 1436064669
+revision = "8e760e6926f3636ee32029f156f91c33b083a97c"
 board = "songyuan"
 soc = "SM8850"
 
@@ -2049,7 +2079,7 @@ title_zh = "Xiaomi Mi 10 / SM8250 UniXNU bring-up (neowiseq)"
 format = 1
 legacy_page = "link"
 repository_id = 1433101213
-revision = "36f6db66bfd5533ebb0d24ec32b7f20e4b1617b2"
+revision = "10904230d50d28fe3e2fd2ee6f0116a55f7501b8"
 board = "umi"
 soc = "SM8250"
 

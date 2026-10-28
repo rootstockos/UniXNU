@@ -36,17 +36,17 @@ evidence = []
 
 [[area]]
 id = "cpu"
-status = "planned"
+status = "implemented"
 components = []
 paths = ["package/CpuFreq*", "scripts/*armcpu*"]
-inputs = ["Identify the cpu and interrupts hardware, resources and existing component interfaces for this board."]
-configuration = ["Record the board.toml fields, DTS properties and defconfig values used for cpu and interrupts."]
-procedure = ["Follow the cpu and interrupts stage in the porting guide and record the actual commands."]
-findings = ["Collect the first cpu and interrupts observation, its cause when established, and the resulting implementation decision."]
+inputs = ["kona: four Cortex-A55 (cpu0-3) and four Cortex-A77 (cpu4-7), MPIDR core number in Affinity1 so phys ids are 0x000-0x700. Interrupts and timers come from the ArmCpu component; secondary start is PSCI CPU_ON over smc."]
+configuration = ["board.toml: sheng-smp=1 starts secondary CPUs, armcpu-spi-ipi=1 routes IPIs through software-pended SPIs, armcpu-self-ipi=1 makes each core signal itself so XNU enables its IPI (a component argument, not one of the documented boot arguments), armcpu-diagnostics=1 reports the bring-up. dts: unixnu,cluster-type E on cpu0-3 and P on cpu4-7."]
+procedure = ["Apply both SoC patches (native-smp-secondary, native-smp-type-clusters) through the SoC repository's patch series, then build kernel, payload and boot image and boot over USB. Verify in the build tree that MAX_CPUS is 8 in the BCM2837 block, MAX_CPU_CLUSTERS is 2 and __ARM_AMP__ survives the later #undef."]
+findings = ["Without native-smp-secondary.patch the reset vector masks MPIDR with 0xFF, which is Aff0 and is zero for every kona core, so every secondary core picked the boot CPU's cpu_data and reset handler. The boot either panicked with Invalid kernel stack pointer or hard-locked with interrupts off in early initialisation.", "unixnu,cluster-type must never ship without native-smp-type-clusters.patch. With MAX_CPU_CLUSTERS still 1 the topology parser takes phys_cluster_id = (cluster_type == P), which is 1, and writes cluster_phys_to_logical[1] past the end of a one-element stack array. Release builds do not assert: the kernel dies before the console comes up. scripts/check-smp-topology.py refuses that combination.", "Both patches are private to UniXNU-pipa, not present in UniXNU/UniXNU. They live in the SM8250 SoC repository because the topology they describe is a property of the SoC, which is why the pins differ from the SM8550 device's."]
 completion = ["Every enabled CPU reaches its entry checkpoint and timer/IPI handling works on each enabled CPU."]
-limits = ["Hardware inputs and implementation are pending for this example board."]
-next_action = ["Inventory the required cpu and interrupts inputs before implementation."]
-evidence = []
+limits = ["Secondary CPUs have not been brought up on hardware yet. The two patches are applied only in the build feed checkout, not yet committed to FFT-infra/UniXNU-sm8250-common, so a fetch or tree refresh loses them.", "unixnu,cluster-type is still declared in the board DTS rather than the SoC DTSI."]
+next_action = ["Boot the image carrying both patches and read SMP run count, armcpu_smp_step, psci_rc and the boot time."]
+evidence = [{ kind = "source", reference = "scripts/check-smp-topology.py", result = "Refuses a device tree that declares cluster-type without the cluster patch applied and MAX_CPU_CLUSTERS >= 2, the combination that killed three boots silently." }]
 
 [[area]]
 id = "memory"
@@ -134,17 +134,17 @@ evidence = [
 
 [[area]]
 id = "input"
-status = "planned"
-components = []
-paths = ["drivers/ShengHidInput", "drivers/ShengNovatekTouch", "package/*Touch*", "package/*Button*", "scripts/*touch*", "scripts/*hid*"]
-inputs = ["Identify the input hardware, resources and existing component interfaces for this board."]
-configuration = ["Record the board.toml fields, DTS properties and defconfig values used for input."]
-procedure = ["Follow the input stage in the porting guide and record the actual commands."]
-findings = ["Collect the first input observation, its cause when established, and the resulting implementation decision."]
+status = "implemented"
+components = ["QcomGeniSpi", "ShengHidInput", "ShengNovatekTouch"]
+paths = ["drivers/ShengHidInput", "drivers/ShengNovatekTouch", "kits/alioth-touch", "scripts/build-alioth-touch.py", "scripts/build-gop-legacy-display.py"]
+inputs = ["FocalTech FT5652 on GENI SE4 (QUPv3 wrapper 0), per alioth-sm8250.dtsi: spi-max-frequency 6000000, interrupts <39 0x2008>, reset GPIO 33, irq GPIO 39, vdd L10C, vcc_i2c L1C, display-coords 0 0 8640 19200, max-touch-number 10."]
+configuration = ["board.toml: native-touch=1 starts kits/alioth-touch, sheng-touch-hid=1 enables the publication path in ShengHidInput, native-touch-diag=1 is a measurement-only round and must be removed for release images. SPI clock is the device tree's 6 MHz; the source is TCXO 19.2 MHz on DFS level 0."]
+procedure = ["Build with component ShengHidInput selected and the board display recipe, which invokes build-sheng-hid-input.py and archives NativeHidInput.late.o plus hid-original-bindings.o into the force-loaded libNativeLegacyDisplay.late.a. Then build payload and boot image, verify the payload carries the built kernel, and boot over USB."]
+findings = ["The part answers register reads (ID 0x5652) and returns a CRC-correct all-0xFF buffer while it has no report; an earlier version of FocalTouchProtocol.c treated that buffer as a successful empty frame, which is why every image reported frames=valid with contacts=0.", "Frame reads gated on GPIO 39 going low produced real contacts: at t=100 s two contacts, low count 284, raw 0002805f4598; the part's interrupt counter 0x8F rose from 01 to e0 and its work counter 0x91 advances 60 per second, so the sensor, the SPI link, the CRC and the interrupt line are all working.", "The HID publisher was never in the kernel: ShengHidInput compiles NativeHidInput.cpp but nothing archived it, and an object with no inbound reference is dropped from a plain archive. Selected as a component and archived by the display recipe, as UniXNU-sheng does, it links."]
 completion = ["Touches map to the display, simultaneous contacts keep stable IDs, release events arrive, and buttons produce expected HID reports."]
-limits = ["Hardware inputs and implementation are pending for this example board."]
-next_action = ["Inventory the required input inputs before implementation."]
-evidence = []
+limits = ["No HID report has reached the OS yet: native_touch_hid_reports stays 0 while contacts arrive, so the remaining work is the publication path, not the sensor.", "Buttons are not implemented on this board."]
+next_action = ["Boot the image that carries the archived HID objects and confirm native_touch_hid_reports rises and the UI responds to a swipe."]
+evidence = [{ kind = "source", reference = "kits/alioth-touch/FocalTouchProtocol.c", result = "Frame parsing treats an all-0xFF payload as no data, decodes 15-bit coordinates with the low bits in the pressure byte, and records the CRC it compared so 'passed' is visible rather than inferred." }]
 
 [[area]]
 id = "gpu"
@@ -234,6 +234,7 @@ procedure = [
   "./unixnu build kernel, then build payload and bootimg, then fastboot flash boot_b.",
   "Read the console at /dev/tty.usbmodem<N> with a raw 115200 8N1 tty; the dock's SN234567892 node is not the phone.",
   "Control frames are SXNU1 <16 hex session> <8 hex seq> <VERB> <8 hex crc32>, HELLO first to learn the session.",
+  "One unattended round is scripts/run-sheng-unattended.sh <image> [timeout]: fastboot boot the image, wait for the board's own return, boot the reader from slot a, read and decode into build/sheng-logs/<tag>-<boot id>/, then restore the slot. Fail-closed, and the timeout must exceed sheng-autoreset by 60 s.",
 ]
 findings = [
   "The CDC-ACM console refused to start with error=10 core=0 domain=5. QcomUsbDomainInstall calls halted() before scan(), so a PRTCAPDIR of 3 would have returned CoreRunning=4; it returned 5, which proves the controller already reported device mode.",
@@ -242,6 +243,10 @@ findings = [
   "printf and kprintf both fail to reach the console: a DEVELOPMENT kernel leaves disable_kprintf_output true without -enable_kprintf_spam, and printf's console path did not reach the _cnputs tee either. qcom_usb_debug_write() is the entry point that works.",
   "Exit records measured over 420 s: 180 xpcproxy exits with status=0 (normal fork and exit), 13 cryptexd SIGABRT with ns=18 code=2 (OS_REASON_LIBSYSTEM_CODE_FAULT), 11 liveactivitiesd SIGTRAP, 2 lsd SIGSEGV. Each process crashes at one fixed PC repeated, so the fault is deterministic rather than a race.",
   "A software REBOOT via the control channel is acknowledged (state=queued) but does not reach fastboot: the worker calls reboot_kernel(0, NULL), an orderly restart that unmounts every filesystem and returns through UEFI. Entering fastboot needs the ABL IMEM handshake, whose address is not measured here.",
+  "The persistent log writer runs: boot-usb101 recorded 273 rounds over 546 s with zero write errors after the console had already stopped, so the medium is the only record past the link's death.",
+  "Returning to fastboot works with sheng-log=1 and sheng-autoreset=<seconds> together: boot-usb102 rebooted at 153 s and boot-usb103 at 120 s, both landing in the board's own bootloader with the PON spare cell written ('pon: subtype 04 shift 1 spare 00 -> 04 want 04 rc=0 ok pon_rc=0') and IMEM reading the reason back (known=1). PSCI alone cannot do it: SYSTEM_RESET, SYSTEM_RESET2(32) and SYSTEM_RESET2(64) all report NOT_SUPPORTED, so PS_HOLD is the path that works.",
+  "The reader must seek relative to the partition: /dev/block/by-name/userdata starts at LBA 0x2a8000, so the window's last 8192 blocks are skip=59086843, not the absolute LBA 61872123 the header records. Passing the absolute value reads nothing at all and looks like a hung read.",
+  "The console's death is a latch, not a transient: dwc3_poll() returns -1 forever once d->failed is set (Dwc3.c:570/581/584), and nothing in the driver clears it, so the worker's retry path cannot revive the link.",
 ]
 completion = [
   "The console enumerates and answers HELLO and STATUS on the board; STATUS reports usb=3 er=0.",
@@ -253,6 +258,7 @@ limits = [
   "Symbolication of the crash PCs against the extracted dyld shared cache was attempted and produced implausible image names, so it is not reported as a result.",
 ]
 next_action = [
+  "Make the console survive its first error: clear d->failed and re-initialise the controller from the worker, with backoff, and draw the worker's retry and error counters on the diagnostic page so the failure is readable without the link it is about.",
   "Attribute cryptexd's fault, then decide whether the fix is a stub, a mount change, or accepting the crash.",
   "Wait for the MAC refusal to reproduce and read the ip_mac_return value it now prints.",
 ]

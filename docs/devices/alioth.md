@@ -6,7 +6,7 @@
 
 Device template. Complete each area with board-specific inputs and evidence.
 
-Source record: [porting.toml](https://github.com/FFT-infra/UniXNU-alioth/blob/695a35bd11337a27473a1ef6687977c0527b6878/porting.toml), `695a35bd11337a27473a1ef6687977c0527b6878`.
+Source record: [porting.toml](https://github.com/FFT-infra/UniXNU-alioth/blob/0fb1ff33fd61535b5a6b7e4d007c8dcd2e4345bf/porting.toml), `0fb1ff33fd61535b5a6b7e4d007c8dcd2e4345bf`.
 
 This page is generated from the device record.
 
@@ -14,11 +14,11 @@ This page is generated from the device record.
 | --- | --- |
 | [Configuration](#configuration) | `planned` |
 | [Firmware and boot](#firmware) | `planned` |
-| [CPU and interrupts](#cpu) | `planned` |
+| [CPU and interrupts](#cpu) | `implemented` |
 | [Memory and DMA](#memory) | `planned` |
 | [Storage and root](#storage) | `device-verified` |
 | [Display](#display) | `implemented` |
-| [Input](#input) | `planned` |
+| [Input](#input) | `implemented` |
 | [GPU](#gpu) | `planned` |
 | [Network](#network) | `planned` |
 | [Audio](#audio) | `planned` |
@@ -102,23 +102,25 @@ Collect evidence using the next action.
 
 ## CPU and interrupts {#cpu}
 
-`planned`
+`implemented`
 
 ### Hardware and dependencies
 
-- Identify the cpu and interrupts hardware, resources and existing component interfaces for this board.
+- kona: four Cortex-A55 \(cpu0-3\) and four Cortex-A77 \(cpu4-7\), MPIDR core number in Affinity1 so phys ids are 0x000-0x700. Interrupts and timers come from the ArmCpu component; secondary start is PSCI CPU\_ON over smc.
 
 ### Configuration
 
-- Record the board.toml fields, DTS properties and defconfig values used for cpu and interrupts.
+- board.toml: sheng-smp=1 starts secondary CPUs, armcpu-spi-ipi=1 routes IPIs through software-pended SPIs, armcpu-self-ipi=1 makes each core signal itself so XNU enables its IPI \(a component argument, not one of the documented boot arguments\), armcpu-diagnostics=1 reports the bring-up. dts: unixnu,cluster-type E on cpu0-3 and P on cpu4-7.
 
 ### Procedure
 
-- Follow the cpu and interrupts stage in the porting guide and record the actual commands.
+- Apply both SoC patches \(native-smp-secondary, native-smp-type-clusters\) through the SoC repository's patch series, then build kernel, payload and boot image and boot over USB. Verify in the build tree that MAX\_CPUS is 8 in the BCM2837 block, MAX\_CPU\_CLUSTERS is 2 and \_\_ARM\_AMP\_\_ survives the later \#undef.
 
 ### Development findings
 
-- Collect the first cpu and interrupts observation, its cause when established, and the resulting implementation decision.
+- Without native-smp-secondary.patch the reset vector masks MPIDR with 0xFF, which is Aff0 and is zero for every kona core, so every secondary core picked the boot CPU's cpu\_data and reset handler. The boot either panicked with Invalid kernel stack pointer or hard-locked with interrupts off in early initialisation.
+- unixnu,cluster-type must never ship without native-smp-type-clusters.patch. With MAX\_CPU\_CLUSTERS still 1 the topology parser takes phys\_cluster\_id = \(cluster\_type == P\), which is 1, and writes cluster\_phys\_to\_logical\[1\] past the end of a one-element stack array. Release builds do not assert: the kernel dies before the console comes up. scripts/check-smp-topology.py refuses that combination.
+- Both patches are private to UniXNU-pipa, not present in UniXNU/UniXNU. They live in the SM8250 SoC repository because the topology they describe is a property of the SoC, which is why the pins differ from the SM8550 device's.
 
 ### Completion criteria
 
@@ -126,15 +128,16 @@ Collect evidence using the next action.
 
 ### Current limits
 
-- Hardware inputs and implementation are pending for this example board.
+- Secondary CPUs have not been brought up on hardware yet. The two patches are applied only in the build feed checkout, not yet committed to FFT-infra/UniXNU-sm8250-common, so a fetch or tree refresh loses them.
+- unixnu,cluster-type is still declared in the board DTS rather than the SoC DTSI.
 
 ### Next action
 
-- Inventory the required cpu and interrupts inputs before implementation.
+- Boot the image carrying both patches and read SMP run count, armcpu\_smp\_step, psci\_rc and the boot time.
 
 ### Evidence
 
-Collect evidence using the next action.
+- `source`: [Refuses a device tree that declares cluster-type without the cluster patch applied and MAX\_CPU\_CLUSTERS &gt;= 2, the combination that killed three boots silently.](https://github.com/FFT-infra/UniXNU-alioth/blob/0fb1ff33fd61535b5a6b7e4d007c8dcd2e4345bf/scripts/check-smp-topology.py)
 
 ## Memory and DMA {#memory}
 
@@ -216,7 +219,7 @@ Components: `ShengUfs`, `VerifiedRoot`, `VirtioMmioBlock`, `RamBlock`.
 
 ### Evidence
 
-- `device`: [The kernel reports cryptexd aborting with mkdirat ENOSPC while the Data volume reports 31 MiB free, which places the failing write on a mount other than /private/var.](https://github.com/FFT-infra/UniXNU-alioth/blob/695a35bd11337a27473a1ef6687977c0527b6878/docs/evidence/2026-10-27-boot-diagnostics.md)
+- `device`: [The kernel reports cryptexd aborting with mkdirat ENOSPC while the Data volume reports 31 MiB free, which places the failing write on a mount other than /private/var.](https://github.com/FFT-infra/UniXNU-alioth/blob/0fb1ff33fd61535b5a6b7e4d007c8dcd2e4345bf/docs/evidence/2026-10-27-boot-diagnostics.md)
   Command: <code>read /dev/tty.usbmodem&lt;N&gt; at 115200 8N1 and collect EXITLOG records</code>. Revision: `24d127c47217eb580dbe3f3a94c32ad25cbaae00`.
 
 ## Display {#display}
@@ -259,28 +262,32 @@ Components: `GopFramebuffer`.
 
 ### Evidence
 
-- `device`: [DISPLAY stage=10 with CLIENT calls=4 class=IOMobileFramebufferUserClient, and SWAP calls=0: a client connects but no frame is submitted.](https://github.com/FFT-infra/UniXNU-alioth/blob/695a35bd11337a27473a1ef6687977c0527b6878/docs/evidence/2026-10-27-boot-diagnostics.md)
+- `device`: [DISPLAY stage=10 with CLIENT calls=4 class=IOMobileFramebufferUserClient, and SWAP calls=0: a client connects but no frame is submitted.](https://github.com/FFT-infra/UniXNU-alioth/blob/0fb1ff33fd61535b5a6b7e4d007c8dcd2e4345bf/docs/evidence/2026-10-27-boot-diagnostics.md)
   Command: <code>read the diagnostic page and the USB console after booting the image</code>. Revision: `24d127c47217eb580dbe3f3a94c32ad25cbaae00`.
 
 ## Input {#input}
 
-`planned`
+`implemented`
+
+Components: `QcomGeniSpi`, `ShengHidInput`, `ShengNovatekTouch`.
 
 ### Hardware and dependencies
 
-- Identify the input hardware, resources and existing component interfaces for this board.
+- FocalTech FT5652 on GENI SE4 \(QUPv3 wrapper 0\), per alioth-sm8250.dtsi: spi-max-frequency 6000000, interrupts &lt;39 0x2008&gt;, reset GPIO 33, irq GPIO 39, vdd L10C, vcc\_i2c L1C, display-coords 0 0 8640 19200, max-touch-number 10.
 
 ### Configuration
 
-- Record the board.toml fields, DTS properties and defconfig values used for input.
+- board.toml: native-touch=1 starts kits/alioth-touch, sheng-touch-hid=1 enables the publication path in ShengHidInput, native-touch-diag=1 is a measurement-only round and must be removed for release images. SPI clock is the device tree's 6 MHz; the source is TCXO 19.2 MHz on DFS level 0.
 
 ### Procedure
 
-- Follow the input stage in the porting guide and record the actual commands.
+- Build with component ShengHidInput selected and the board display recipe, which invokes build-sheng-hid-input.py and archives NativeHidInput.late.o plus hid-original-bindings.o into the force-loaded libNativeLegacyDisplay.late.a. Then build payload and boot image, verify the payload carries the built kernel, and boot over USB.
 
 ### Development findings
 
-- Collect the first input observation, its cause when established, and the resulting implementation decision.
+- The part answers register reads \(ID 0x5652\) and returns a CRC-correct all-0xFF buffer while it has no report; an earlier version of FocalTouchProtocol.c treated that buffer as a successful empty frame, which is why every image reported frames=valid with contacts=0.
+- Frame reads gated on GPIO 39 going low produced real contacts: at t=100 s two contacts, low count 284, raw 0002805f4598; the part's interrupt counter 0x8F rose from 01 to e0 and its work counter 0x91 advances 60 per second, so the sensor, the SPI link, the CRC and the interrupt line are all working.
+- The HID publisher was never in the kernel: ShengHidInput compiles NativeHidInput.cpp but nothing archived it, and an object with no inbound reference is dropped from a plain archive. Selected as a component and archived by the display recipe, as UniXNU-sheng does, it links.
 
 ### Completion criteria
 
@@ -288,15 +295,16 @@ Components: `GopFramebuffer`.
 
 ### Current limits
 
-- Hardware inputs and implementation are pending for this example board.
+- No HID report has reached the OS yet: native\_touch\_hid\_reports stays 0 while contacts arrive, so the remaining work is the publication path, not the sensor.
+- Buttons are not implemented on this board.
 
 ### Next action
 
-- Inventory the required input inputs before implementation.
+- Boot the image that carries the archived HID objects and confirm native\_touch\_hid\_reports rises and the UI responds to a swipe.
 
 ### Evidence
 
-Collect evidence using the next action.
+- `source`: [Frame parsing treats an all-0xFF payload as no data, decodes 15-bit coordinates with the low bits in the pressure byte, and records the CRC it compared so 'passed' is visible rather than inferred.](https://github.com/FFT-infra/UniXNU-alioth/blob/0fb1ff33fd61535b5a6b7e4d007c8dcd2e4345bf/kits/alioth-touch/FocalTouchProtocol.c)
 
 ## GPU {#gpu}
 
@@ -500,6 +508,7 @@ Components: `QcomXnuUsbDebug`.
 - ./unixnu build kernel, then build payload and bootimg, then fastboot flash boot\_b.
 - Read the console at /dev/tty.usbmodem&lt;N&gt; with a raw 115200 8N1 tty; the dock's SN234567892 node is not the phone.
 - Control frames are SXNU1 &lt;16 hex session&gt; &lt;8 hex seq&gt; &lt;VERB&gt; &lt;8 hex crc32&gt;, HELLO first to learn the session.
+- One unattended round is scripts/run-sheng-unattended.sh &lt;image&gt; \[timeout\]: fastboot boot the image, wait for the board's own return, boot the reader from slot a, read and decode into build/sheng-logs/&lt;tag&gt;-&lt;boot id&gt;/, then restore the slot. Fail-closed, and the timeout must exceed sheng-autoreset by 60 s.
 
 ### Development findings
 
@@ -509,6 +518,10 @@ Components: `QcomXnuUsbDebug`.
 - printf and kprintf both fail to reach the console: a DEVELOPMENT kernel leaves disable\_kprintf\_output true without -enable\_kprintf\_spam, and printf's console path did not reach the \_cnputs tee either. qcom\_usb\_debug\_write\(\) is the entry point that works.
 - Exit records measured over 420 s: 180 xpcproxy exits with status=0 \(normal fork and exit\), 13 cryptexd SIGABRT with ns=18 code=2 \(OS\_REASON\_LIBSYSTEM\_CODE\_FAULT\), 11 liveactivitiesd SIGTRAP, 2 lsd SIGSEGV. Each process crashes at one fixed PC repeated, so the fault is deterministic rather than a race.
 - A software REBOOT via the control channel is acknowledged \(state=queued\) but does not reach fastboot: the worker calls reboot\_kernel\(0, NULL\), an orderly restart that unmounts every filesystem and returns through UEFI. Entering fastboot needs the ABL IMEM handshake, whose address is not measured here.
+- The persistent log writer runs: boot-usb101 recorded 273 rounds over 546 s with zero write errors after the console had already stopped, so the medium is the only record past the link's death.
+- Returning to fastboot works with sheng-log=1 and sheng-autoreset=&lt;seconds&gt; together: boot-usb102 rebooted at 153 s and boot-usb103 at 120 s, both landing in the board's own bootloader with the PON spare cell written \('pon: subtype 04 shift 1 spare 00 -&gt; 04 want 04 rc=0 ok pon\_rc=0'\) and IMEM reading the reason back \(known=1\). PSCI alone cannot do it: SYSTEM\_RESET, SYSTEM\_RESET2\(32\) and SYSTEM\_RESET2\(64\) all report NOT\_SUPPORTED, so PS\_HOLD is the path that works.
+- The reader must seek relative to the partition: /dev/block/by-name/userdata starts at LBA 0x2a8000, so the window's last 8192 blocks are skip=59086843, not the absolute LBA 61872123 the header records. Passing the absolute value reads nothing at all and looks like a hung read.
+- The console's death is a latch, not a transient: dwc3\_poll\(\) returns -1 forever once d-&gt;failed is set \(Dwc3.c:570/581/584\), and nothing in the driver clears it, so the worker's retry path cannot revive the link.
 
 ### Completion criteria
 
@@ -523,14 +536,15 @@ Components: `QcomXnuUsbDebug`.
 
 ### Next action
 
+- Make the console survive its first error: clear d-&gt;failed and re-initialise the controller from the worker, with backoff, and draw the worker's retry and error counters on the diagnostic page so the failure is readable without the link it is about.
 - Attribute cryptexd's fault, then decide whether the fix is a stub, a mount change, or accepting the crash.
 - Wait for the MAC refusal to reproduce and read the ip\_mac\_return value it now prints.
 
 ### Evidence
 
-- `device`: [Console enumerated as 1209:316d named QcomXnuUsbDebug; STATUS returned usb=3 er=0 with the worker polling, so the port is live in both directions.](https://github.com/FFT-infra/UniXNU-alioth/blob/695a35bd11337a27473a1ef6687977c0527b6878/docs/evidence/2026-10-27-boot-diagnostics.md)
+- `device`: [Console enumerated as 1209:316d named QcomXnuUsbDebug; STATUS returned usb=3 er=0 with the worker polling, so the port is live in both directions.](https://github.com/FFT-infra/UniXNU-alioth/blob/0fb1ff33fd61535b5a6b7e4d007c8dcd2e4345bf/docs/evidence/2026-10-27-boot-diagnostics.md)
   Command: <code>read /dev/tty.usbmodem&lt;N&gt; at 115200 8N1 and send SXNU1 ... HELLO / STATUS</code>. Revision: `15a15d7cc526262a64531ff56b3a33bdbc46379c`.
-- `device`: [215 exit records captured. 180 xpcproxy status=0 \(normal\), 13 cryptexd ns=18 code=2, 11 liveactivitiesd sig5, 2 lsd sig11; each process repeats one fixed crash PC, so the faults are deterministic.](https://github.com/FFT-infra/UniXNU-alioth/blob/695a35bd11337a27473a1ef6687977c0527b6878/docs/evidence/2026-10-27-serial-exit-records.log)
+- `device`: [215 exit records captured. 180 xpcproxy status=0 \(normal\), 13 cryptexd ns=18 code=2, 11 liveactivitiesd sig5, 2 lsd sig11; each process repeats one fixed crash PC, so the faults are deterministic.](https://github.com/FFT-infra/UniXNU-alioth/blob/0fb1ff33fd61535b5a6b7e4d007c8dcd2e4345bf/docs/evidence/2026-10-27-serial-exit-records.log)
   Command: <code>./unixnu build kernel; ./unixnu bootimg; fastboot flash boot_b; read the CDC-ACM console for 420 s</code>. Revision: `15a15d7cc526262a64531ff56b3a33bdbc46379c`.
 
 </div>

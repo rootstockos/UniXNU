@@ -6,7 +6,7 @@
 
 Xiaomi Mi 8 SE running the UniXNU source kernel through its own U-Boot UEFI: entry, MMU, timer, PSCI, platform expert and the boot-progress console work on hardware; IOKit is blocked on AppleARMCPU claiming /cpus.
 
-Source record: [porting.toml](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/porting.toml), `86fe9ffbc700915e006fce11474b0d277f0d7dc3`.
+Source record: [porting.toml](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/porting.toml), `b9922c1fe7442009f0c44e78a57366c993fad772`.
 
 This page is generated from the device record.
 
@@ -60,6 +60,13 @@ Components: `ArmDTPlatform`, `DarwinBoot`.
 - Format 2 replaced the hand-written ADT generator of the legacy port \(scripts/make-sirius-adt.py\) with a board DTS: the payload step compiles the tree and derives kernel.macho.adt from it.
 - The arm-io base is derived from the exported nodes, not written by hand: the GIC at 0x17a00000 makes the window start at 0x17000000, which XNU reads as the SoC base.
 - The legacy port set ipad\_identity = true; in format 2 the same identity is the OS profile's \[adt\] tables, so the board only states its deviations.
+- configs/sirius\_defconfig keeps the ARM64 profile's CONFIG\_XNU\_NATIVE\_PAN=y: Kryo 360 implements PAN and SCTLR\_EL1 leaves SPAN clear, so every exception entry sets PSTATE.PAN, and only the PAN build clears it around copyin/copyout \(see the diagnostics area\).
+- CONFIG\_XNU\_NATIVE\_CS\_HASH\_CACHE=y is back on: iPadOS signs code in 16 KiB pages, and this 4 KiB kernel accepts the dyld shared cache's signature only through the native 4K hash cache.
+- The SystemOS cryptex mount \(OWNER\_CACHE\_MOUNT, OWNER\_CACHE\_STARTUP, OWNER\_UNION\_SYSTEMOS\) builds in the bring-up mode BRINGUP\_OWNER\_CACHE, as the uke port does, and its volume is authorized by the boot argument sirius-allow-unverified=1, not by an owner root policy.
+- sirius\_emmc\_hs=3 lets the eMMC driver climb to 25, 50 and 100 MHz, each step proven against blocks read at 400 kHz; the card settles at 50 MHz \(HS\_TIMING 1\).
+- The Data volume: OWNER\_DATA\_MOUNT with SIRIUS\_DATA\_SEED \(NativeEmmc serves the seed instead of RamBlock\) and CONFIG\_XNU\_OWNER\_DATA\_VOLUME\_UUID = EB6CBBA0-ECB9-4556-A483-4B60D54D4306, the volume of the seed that .github/workflows/data-seed.yml built; \[payload.adt\] owned\_memory\_size gives the kernel a 1 GiB window to hold the seed. On the phone the window lands below 4 GiB \(seed at 0xa3cc1000\), the seed is published as the Data window and the kernel mounts its volume \(disk3s1, OwnerData\) at /private/var before launchd.
+- With the Data volume mounted, launchd's mount -P 1 still exits 66: apfs logs 'DT\_get\_fstab\_entries: failed to get filesystem entry at: /filesystems/fstab', and the uke port traced the fatal error to the missing /chosen/boot-manifest-hash. \[adt.chosen.bytes\] boot-manifest-hash now carries uke's explicit bring-up boot-set identity \(SHA-384 of 'UkeBringup.BootSet.v1\\0'\), as asteroids does. On the phone mount-phase-1 and mount-phase-2 then pass and launchd reports 'Early boot complete. Continuing system boot.'
+- Past early boot the 32 MiB Data volume runs out of space \(ENOSPC\) and watchdogd traps \(brk \#1\), which panics the boot. kernel\_args now pass sheng-disable-watchdogd=1 and sheng-lite=1 to package/BootWatchdogPolicy.c \(already linked and called after the Data mount\), which disables watchdogd and the network/iCloud/photo daemons through launchd's disabled.plist, and the seed workflow grows the container to size\_mib \(256 MiB, held in RAM inside the 1 GiB window\); the volume UUID stays. Not yet booted.
 
 ### Completion criteria
 
@@ -69,7 +76,8 @@ Components: `ArmDTPlatform`, `DarwinBoot`.
 ### Current limits
 
 - The SoC profile is new: only the GIC, PSCI, counter and the timer INTID are shared, everything else is still board-local.
-- No device-verified configuration has been recorded against a commit of this repository yet; the evidence is the legacy port's handoff document.
+- The Data seed holds files from the IPSW, so the workflow uploads it encrypted \(ARTIFACT\_PASSPHRASE\) and the payload step takes it from a local path; a new seed has a new volume UUID that the defconfig must follow.
+- The 1 GiB window must start below 4 GiB for the eMMC's 32-bit ADMA2; whether this unit's memory map offers one such run is not yet observed.
 
 ### Next action
 
@@ -78,7 +86,13 @@ Components: `ArmDTPlatform`, `DarwinBoot`.
 
 ### Evidence
 
-- `source`: [Hardware values, the boot chain and the bring-up history of the legacy port, from which this configuration is carried over.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `source`: [Hardware values, the boot chain and the bring-up history of the legacy port, from which this configuration is carried over.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
+- `device`: [With CONFIG\_XNU\_NATIVE\_PAN=y the driver reads PAN as 4194304, all eight CPUs pass the init copyout and launchd's first syscalls return.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261027-pan.log)
+  Command: <code>fastboot flash vendor payload-E-pan-noclear.img; fastboot reboot; python scripts/capture-usb-console.py --follow --wait 180 --duration 420</code>. Revision: `b1a11c4f4eb0bfd28b2dd3dfc59b3c7e3a3e742f`.
+- `device`: [With the SystemOS mount, the 4K hash cache and sirius\_emmc\_hs=3 the shared cache is verified in about 104 s at 50 MHz and dyld maps it.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261027-fast-emmc.log)
+  Command: <code>fastboot flash vendor payload-H-fast.img; fastboot reboot; python scripts/capture-usb-console.py --follow --wait 180 --duration 900</code>. Revision: `1163990229f446753ef006126e55922aa23bda6a`.
+- `host`: [Run 40615426205 built owner-data-32.cdr \(33554432 bytes, sha256 5679d2cf59eba99aa048be0c0e253581aa5bfb1fdff7ff431ed9e91c2bd58c63\) with APFS volume EB6CBBA0-ECB9-4556-A483-4B60D54D4306.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/.github/workflows/data-seed.yml)
+  Command: <code>gh workflow run data-seed.yml -R HuajiFruit/UniXNU-sirius --ref main</code>. Revision: `9562de8b362e6bbae9844052826c609996866aed`.
 
 ## Firmware and boot {#firmware}
 
@@ -124,7 +138,7 @@ Components: `DarwinBoot`.
 
 ### Evidence
 
-- `source`: [Boot-chain diagram, the marker-file boot rule and the DarwinBoot GIC pre-configuration rationale.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `source`: [Boot-chain diagram, the marker-file boot rule and the DarwinBoot GIC pre-configuration rationale.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
 
 ## CPU and interrupts {#cpu}
 
@@ -169,7 +183,7 @@ Components: `ArmCpu`.
 
 ### Evidence
 
-- `source`: [Timer INTID measurement, the TOPO checkpoint and the AppleARMCPU panic analysis.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `source`: [Timer INTID measurement, the TOPO checkpoint and the AppleARMCPU panic analysis.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
 
 ## Memory and DMA {#memory}
 
@@ -208,7 +222,7 @@ Components: `ArmCpu`.
 
 ### Evidence
 
-- `source`: [DRAM split, framebuffer address and the memory-map checkpoint.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `source`: [DRAM split, framebuffer address and the memory-map checkpoint.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
 
 ## Storage and root {#storage}
 
@@ -250,6 +264,12 @@ Components: `ArmCpu`.
 - The init exec returns 0 and then nothing asks the driver for another block: reads stop at 0x10D \(269 requests, 0x98F blocks\) while the heartbeat keeps counting, so the wait is past the storage stack. The caller side is now instrumented \(sirius-post-exec-trace.patch\): the exec thread-switch state, every new user thread start at thread\_bootstrap\_return, the first pid 1 syscalls with their returns, each bsd\_ast for pid 1 and the first user faults after the exec, all written to the same USB ring and summarised by the heartbeat.
 - The caller-side probe closes that question: the pid 1 thread stays in load\_init\_program\_at\_path, inside copyout\(\) of the launchd path, and takes 62.6 million faults in about a minute. The stall is a fault loop in the exec path, not a storage wait.
 - That fault loop was PAN \(see the diagnostics area\). With CONFIG\_XNU\_NATIVE\_PAN=y and the driver no longer clearing PAN, all eight CPUs pass the copyout, the exec returns 0 and launchd issues its first syscalls, every one of them returning: 74, 372, 294, 20, 427, 381, 5, 90, 4 and 202. Syscall 294 \(shared\_region\_check\_np\) returns ENOMEM with 'vm\_shared\_region\_start\_address\(\) failed', i.e. dyld finds no shared cache mapped; afterwards the launchd thread waits and the read count stays at 0x113.
+- The shared cache is in the SystemOS cryptex. Building the ARM64 series' owner SystemOS mount \(OWNER\_CACHE\_MOUNT, OWNER\_CACHE\_STARTUP, OWNER\_UNION\_SYSTEMOS, with BRINGUP\_OWNER\_CACHE as the uke port has it\) and answering its two block hooks from NativeEmmc \(sirius-allow-unverified=1\) mounts disk4s1 \(SystemCryptex, 8846FE78-2910-4297-AF97-D59BB6F8FC16\) as a union over / before launchd starts; dyld then opens the cache, fstats it and preads its header.
+- Registering the cache's code signature \(fcntl, syscall 92\) then returned 85 \(EBADEXEC\): iPadOS signs code in 16 KiB pages, and this 4 KiB kernel only accepts that through native-4k-signature-hash-cache.patch, which the first-console configuration had off. With CONFIG\_XNU\_NATIVE\_CS\_HASH\_CACHE=y the call returns 0 after the kernel reads the whole cache once, and dyld maps it \(197 and 73 return 0\).
+- The block driver ran at the 400 kHz identification clock all along: sirius\_emmc\_prepare\(\) reprogrammed it after the probe's 25 MHz switch, and every 512-byte block was its own CMD17 with five ring lines. On this 8-bit bus that is about 770 blocks/s, and the 2.81 GiB cache took two hours. Multi-block reads \(CMD18 with Auto-CMD12, 256 blocks per command through an ADMA2 table\) and a clock ladder proven against blocks read at 400 kHz bring it to 50 MHz: EXT\_CSD reports rev 8, width 2 \(8-bit\), HS\_TIMING 1 and DEVICE\_TYPE 0x57, runs pass with EIS 0, and the whole cache is read in about 104 s \(27 MiB/s on average, 30 MiB/s peak\).
+- Past the shared cache launchd runs its boot tasks: mount \(pid 3\) exits with status 66 \(EX\_NOINPUT\) and the boot panics with 'mount\[3\] exited'. There is no Data volume yet, which is the mount it needs.
+- NativeEmmc serves the Data seed itself instead of RamBlock: the payload's /chosen/memory-map/RAMDisk becomes a read-write RAM window named Data, and the driver answers the two RamBlock entry points kern\_exec.c calls once its seed path is compiled in, native\_ram\_block\_volume\_seed\(\) \(the Data volume on that window\) and native\_ram\_block\_gpu\_addon\(\) \(none on this board; the first link failed on it as an undefined symbol although its declaration is weak\). IOMaximumBlockCountRead is 2048 blocks now that transfers run in 256-block commands.
+- Once userland read in parallel, APFS reported data hash mismatches on the sealed SystemOS volume \(disk6s1\). The block driver drains requests on their callers' threads through one shared bounce buffer, and released the transport lock between the read into it and the copy out of it, so a second reader could refill it first and the first request received the other one's blocks. The copy now happens under the lock \(the request's memory is wired for the I/O, so it cannot fault back into the driver\). Not yet booted.
 
 ### Completion criteria
 
@@ -258,29 +278,39 @@ Components: `ArmCpu`.
 ### Current limits
 
 - Read-only: the transfer path has no write command and reportWriteProtection\(\) says so.
-- After launchd's first syscalls the driver receives no further requests \(reads stay at 0x113\): dyld finds no shared region and the launchd thread then waits; the probe logs only the first 24 pid 1 syscalls, so the call it waits in is not recorded yet.
-- The card clock is still the identification rate \(400 kHz, about 550 blocks/s measured\); nothing raises it to high speed yet.
+- There is no Data volume: launchd's mount boot task exits 66 and the boot panics right after the shared cache is mapped.
+- The card runs at 50 MHz in high-speed SDR on 8 bits \(about 30 MiB/s\). It supports DDR52 and HS200 \(DEVICE\_TYPE 0x57\), but DDR needs the host's DDR mode and HS200 needs tuning, and neither is implemented; 100 MHz is only tried when the boot chain already left HS200 timing.
+- The SystemOS volume is authorized by a bring-up boot argument \(sirius-allow-unverified=1\), not by an owner root policy.
 - The exec policy no longer needs a boot argument: the payload carries the original trust-cache bundle and the kernel initialises its runtime at startup. The sirius-skip-cs bypass is kept in the patch series, unused, in case a future image falls outside the bundle.
 
 ### Next action
 
-- Verify the 25 MHz switch \(sirius\_emmc\_hs=1\) reads the GPT signature back and measure the new block rate; then decide whether the CMD6 high-speed switch to 50 MHz is worth it.
+- Provide the Data volume the way asteroids does: a Data seed in the payload, the RAM block device and OWNER\_DATA\_MOUNT with the seed's APFS volume UUID, then boot past launchd's mount task.
 - Keep the trust-cache bundle in step with the OS build when the IPSW changes \(its sha256 is pinned in board.toml \[payload\] trust\_cache\_sha256\).
-- Find how dyld gets the shared cache: the OS profile's working ports \(tb128fu, asteroids\) map it after the same exec, so compare their SystemOS cryptex handling with this board's.
-- Raise the pid 1 syscall log beyond 24 entries and mirror launchd's stderr writes into the USB ring, so the call launchd waits in and dyld's own message are recorded.
-- Raise the SDCC1 clock out of identification speed \(GCC root clock plus the card's high-speed mode\).
+- Raise the pid 1 syscall log beyond 24 entries and mirror launchd's stderr writes into the USB ring, so later boot-task failures name their call and message.
+- For more storage speed: DDR52 \(8-bit DDR at 52 MHz, no tuning\) roughly doubles the rate; HS200 needs the msm tuning sequence.
 
 ### Evidence
 
-- `device`: [NativeEmmc starts from bsd\_init, publishes 0x747BFDF blocks of 512 bytes, and IOStorageFamily reads block 0, block 1 and block 2 with 21 sectors \(the 84 GPT entries\) through doAsyncReadWrite; the heartbeat keeps ticking with the transfer count fixed at seven, so the boot ends at the root-device wait. Log in docs/HANDOFF.zh-CN.md.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `device`: [NativeEmmc starts from bsd\_init, publishes 0x747BFDF blocks of 512 bytes, and IOStorageFamily reads block 0, block 1 and block 2 with 21 sectors \(the 84 GPT entries\) through doAsyncReadWrite; the heartbeat keeps ticking with the transfer count fixed at seven, so the boot ends at the root-device wait. Log in docs/HANDOFF.zh-CN.md.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
   Command: <code>fastboot flash vendor sirius-obs.img; fastboot reboot; capture-usb-console.py --duration 240</code>. Revision: `d867b1d6498dc4d0f4ae4e18060762dcae6c5847`.
-- `host`: [The kernel links with NativeEmmc in the image \(kernel.macho sha256 372820eb1b2cd9ecee15d769d1296771d0c8141c2681626d54651a62473446b8\); the GitHub macOS runner builds the same archive \(kernel workflow run 40386710258\).](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `host`: [The kernel links with NativeEmmc in the image \(kernel.macho sha256 372820eb1b2cd9ecee15d769d1296771d0c8141c2681626d54651a62473446b8\); the GitHub macOS runner builds the same archive \(kernel workflow run 40386710258\).](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
   Command: <code>./scripts/xnu-container.sh run bash -lc './unixnu build kernel --skip-setup -D ../sirius'</code>. Revision: `a47f0d6b4615c3cdebf92102400a1bc302eb6d73`.
-- `device`: [APFS mounts disk0/disk1s1/disk2s1, bsd\_init completes, execve of /sbin/launchd prints activate enter, namei 0, 'exec policy answered 1, skipped by boot arg' and finally 'execve activate 0'; the driver then has no transfer in flight and the read count stops at 0x10D, so the remaining wait is past storage.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `device`: [APFS mounts disk0/disk1s1/disk2s1, bsd\_init completes, execve of /sbin/launchd prints activate enter, namei 0, 'exec policy answered 1, skipped by boot arg' and finally 'execve activate 0'; the driver then has no transfer in flight and the read count stops at 0x10D, so the remaining wait is past storage.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
   Command: <code>fastboot flash vendor sirius-if.img; fastboot reboot; capture-usb-console.py --duration 220</code>. Revision: `bb812428dccd1f676455813ad198ed2bee4a8e3e`.
-- `device`: [kernel.macho 6f0d59b13e4ac3861c902962df8043c3bccac959cffcd859c5f965f697194d17, payload 00c8f4d7feba7982c1fcdcb2f072121d6b7a227fc38ebc0edd229bbd00b5bb08, eight CPUs: PAN reads 4194304, init path copyout 0, execve activate 0, two user thread starts, then launchd syscalls 74 372 294 20 427 381 5 90 4 202 all return; 294 returns 12 with 'vm\_shared\_region\_start\_address\(\) failed' and reads stay at 0x113.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/evidence/sirius-usb-console-20261027-pan.log)
+- `device`: [kernel.macho 6f0d59b13e4ac3861c902962df8043c3bccac959cffcd859c5f965f697194d17, payload 00c8f4d7feba7982c1fcdcb2f072121d6b7a227fc38ebc0edd229bbd00b5bb08, eight CPUs: PAN reads 4194304, init path copyout 0, execve activate 0, two user thread starts, then launchd syscalls 74 372 294 20 427 381 5 90 4 202 all return; 294 returns 12 with 'vm\_shared\_region\_start\_address\(\) failed' and reads stay at 0x113.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261027-pan.log)
   Command: <code>fastboot flash vendor payload-E-pan-noclear.img; fastboot reboot; python scripts/capture-usb-console.py --follow --wait 180 --duration 420</code>. Revision: `b1a11c4f4eb0bfd28b2dd3dfc59b3c7e3a3e742f`.
-- `source`: [SDCC1 bring-up, the ADMA2 read path and the GPT parse.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/package/sirius_emmc.c)
+- `device`: [kernel.macho 5d045f1a6d6ddad44331a7e6ea8b1cc74a8c84058916287a83603ab912a66038, payload 6b6c562c1e8c91eb2c776fc6ef5f58227fd9eb000872ddb6e2fff6844886515a: NEMMC owner volume /dev/disk4s1, disk4s1 \(SystemCryptex, 8846FE78-...\) mount-complete before launchd; dyld opens, fstats and preads the cache, then fcntl \(92\) returns 85.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261027-systemos.log)
+  Command: <code>fastboot flash vendor payload-F-systemos.img; fastboot reboot; python scripts/capture-usb-console.py --follow --wait 180 --duration 420</code>. Revision: `24f6094010c728ecfdf3e3bbacd0effaeec60fb5`.
+- `device`: [kernel.macho a10c51aa4fab72faf86912e1ca6736c0d068432ceff1b233f47948197848b8c4, payload 8402424eb1d9d4126cfe19ab2eb3742aad40d7ba5149267534ae94a7e745c2ce: fcntl \(92\) no longer fails and stays in the kernel's whole-file hash check, reading about 770 blocks/s \(400 kHz on 8 bits\) with the pid 1 fault count flat.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261027-systemos.log)
+  Command: <code>fastboot flash vendor payload-G-cshash.img; fastboot reboot; python scripts/capture-usb-console.py --follow --wait 180 --duration 1800</code>. Revision: `86fe9ffbc700915e006fce11474b0d277f0d7dc3`.
+- `device`: [kernel.macho 3452714ae8b3ef3b775bed9cde5f93c11fc2d147e0375eec22430fb0dcf70999, payload 24118c6275d90fba6dd3e684353d4525640c7d627042092868a413609686f110: ext\_csd rev 8 width 2 timing 1 type 0x57, multi=ok eis 0, 25 and 50 MHz ok; 5898655 blocks \(2.81 GiB\) in about 104 s; fcntl 92, mmap 197 and munmap 73 return 0, then 'mount\[3\] exited ... exit status 66' panics the boot.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261027-fast-emmc.log)
+  Command: <code>fastboot flash vendor payload-H-fast.img; fastboot reboot; python scripts/capture-usb-console.py --follow --wait 180 --duration 900</code>. Revision: `1163990229f446753ef006126e55922aa23bda6a`.
+- `device`: [kernel.macho 2e6e1ddc51b1f8b2d58c607477f81b0327d95f301382d8d4c1180096b402408a, payload 2bd98aa417ab6007b8c95c2071f4907dee5b4afcd09ac3899604e73dc9d21bff: NEMMC data seed at 0xa3cc1000 \(33554432 bytes\), Data volume disk3s1 \(OwnerData, EB6CBBA0-...\) mount-complete before launchd, shared cache verified; at 157.7 s mount \(pid 3\) exits 66 after 'DT\_get\_fstab\_entries: failed to get filesystem entry at: /filesystems/fstab'.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261028-data.log)
+  Command: <code>fastboot flash vendor payload-I-data.img; fastboot reboot; python scripts/capture-usb-console.py --follow --wait 120 --duration 280 --match 'NEMMC PANIC TEXT END' --idle-stop 20</code>. Revision: `33509e84db86517ff9bf349408dc66ab39c43d18`.
+- `device`: [kernel.macho 2e6e1ddc51b1f8b2d58c607477f81b0327d95f301382d8d4c1180096b402408a, payload aa917c707d2f0a8f46ae44e635b838e7e3892822c115c0233bdb5bd3e2bae323: launchd runs every boot task through mount-phase-2 and logs 'Early boot complete' at 161.5 s; driverkitd, MobileGestaltHelper, mobileassetd and SpringBoard start; the Data volume reaches ENOSPC at 175.6 s, APFS reports three data hash mismatches on disk6s1, and watchdogd's brk \#1 exit panics the boot at 191.9 s.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261028-early-boot.log)
+  Command: <code>fastboot flash vendor payload-J-bmh.img; fastboot reboot; python scripts/capture-usb-console.py --follow --wait 120 --duration 280 --match 'NEMMC PANIC TEXT END' --idle-stop 20</code>. Revision: `09096e3738c618bb18a51af50cdfbc7f6431aa59`.
+- `source`: [SDCC1 bring-up, the ADMA2 read path and the GPT parse.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/package/sirius_emmc.c)
 
 ## Display {#display}
 
@@ -321,7 +351,7 @@ Components: `ArmCpu`.
 
 ### Evidence
 
-- `source`: [Boot-progress panel behaviour, the panic snapshot fix and the geometry of the U-Boot framebuffer.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `source`: [Boot-progress panel behaviour, the panic snapshot fix and the geometry of the U-Boot framebuffer.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
 
 ## Input {#input}
 
@@ -505,7 +535,7 @@ Collect evidence using the next action.
 
 ### Evidence
 
-- `source`: [PSCI reset evidence and the reason sleep is disabled.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `source`: [PSCI reset evidence and the reason sleep is disabled.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
 
 ## Image assembly {#packaging}
 
@@ -561,7 +591,7 @@ Components: `XnuPrelink`.
 
 ### Evidence
 
-- `source`: [Build and deploy loop, the CI kernel artifact and the payload layout on the vendor partition.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
+- `source`: [Build and deploy loop, the CI kernel artifact and the payload layout on the vendor partition.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
 
 ## Diagnostics {#diagnostics}
 
@@ -597,6 +627,9 @@ Components: `XnuPrelink`.
 - The loop is not limited to the copyout: with the trust-cache bundle back in the payload the exec completes \(execve activate 0, AMFI answers nothing\) and the exec'd thread enters userland at pc 0x100924e50, where it takes 92 million instruction aborts in about a minute on three addresses \(ESR 0x82000007, level-3 translation faults\) without ever issuing a syscall or a single block read; the entry point is right, the code pages are simply not visible to the CPU.
 - Both loops have the same shape: vm\_fault opens the page in thread-&gt;map's pmap and returns KERN\_SUCCESS, while the CPU keeps taking the fault. AT S1E1W and pmap\_find\_phys disagree about the physical page behind 0x1000, which points at the CPU running with a pmap that is not the thread's after the exec task switch.
 - A payload built without --trust-cache leaves the ring reporting no external trust caches found and AMFI kills launchd with namespace 9 \(OS\_REASON\_EXEC\) code 8; the same kernel with the bundle present reaches execve activate 0 without an exec-policy line, so that panic is a build-argument slip, not a regression.
+- The console can be captured on Windows: usbser.sys binds it as a COM port \(USB\\VID\_1209&amp;PID\_0001, serial SIRIUS01\) and capture-usb-console.py opens it with plain Win32 calls, because the gadget does not answer SET\_LINE\_CODING and SetCommState \(and pyserial\) fail with error 121.
+- The ring has no timestamps and is replayed whole on every poke, so capture-usb-console.py --timeline records when each distinct line first arrives; a timed boot shows 51 s from fastboot reboot to the eMMC driver, the shared-cache check until about 168 s and the mount panic at 171.7 s. A hard panic stops the kernel before the heartbeat mirrors its text, so --idle-stop ends a capture after a silence instead.
+- NativeEmmc reports the Data seed as 'NEMMC data seed at/bytes' when it publishes the RAM window and 'NEMMC data volume /dev/...' when the owner Data mount asks for it, or 'NEMMC data volume not found on the seed'.
 
 ### Completion criteria
 
@@ -612,9 +645,13 @@ Components: `XnuPrelink`.
 
 ### Evidence
 
-- `source`: [Entry probe, panic screen, panel rows and the evidence convention of the port.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/HANDOFF.zh-CN.md)
-- `device`: [3813 bytes of kernel log read from /dev/ttyACM0 over the DWC3 CDC console.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/docs/evidence/sirius-usb-console-20261026-1605.log)
+- `source`: [Entry probe, panic screen, panel rows and the evidence convention of the port.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/HANDOFF.zh-CN.md)
+- `device`: [3813 bytes of kernel log read from /dev/ttyACM0 over the DWC3 CDC console.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261026-1605.log)
   Command: <code>sudo python3 scripts/capture-usb-console.py --wait 60 --duration 190 --output /tmp/boot.log</code>. Revision: `366abe2948fdb0c1554f7e0b89b731160f4527a4`.
+- `device`: [Captured on Windows \(COM7\) with --timeline: the Data seed and both owner volumes appear at 52 s after fastboot reboot, the mount panic text at 158.3 s, and the capture stopped on its marker after 5.4 MB.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261028-data.log)
+  Command: <code>python scripts/capture-usb-console.py --follow --wait 120 --duration 280 --timeline out/I-data.timeline --match 'NEMMC PANIC TEXT END' --idle-stop 20</code>. Revision: `33509e84db86517ff9bf349408dc66ab39c43d18`.
+- `device`: [launchd's own \[System Event\] boot-task lines reach the USB ring, so the timeline shows each task as it starts; the heartbeat mirrored watchdogd's panic text at 191.9 s and the capture stopped on it.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/docs/evidence/sirius-usb-console-20261028-early-boot.log)
+  Command: <code>python scripts/capture-usb-console.py --follow --wait 120 --duration 280 --timeline out/J-bmh.timeline --match 'NEMMC PANIC TEXT END' --idle-stop 20</code>. Revision: `09096e3738c618bb18a51af50cdfbc7f6431aa59`.
 
 ## boot-chain {#boot-chain}
 
@@ -665,7 +702,7 @@ Components: `XnuPrelink`.
 
 ### Evidence
 
-- `source`: [The build recipe, the four environment lines that add the UniXNU chain, and the two partition/short-scan traps.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/uboot/README.md)
-- `source`: [Provenance of the vendored EDK II package \(framework commit f85b5a6\) and what the payload takes from it.](https://github.com/HuajiFruit/UniXNU-sirius/blob/86fe9ffbc700915e006fce11474b0d277f0d7dc3/efi/README.md)
+- `source`: [The build recipe, the four environment lines that add the UniXNU chain, and the two partition/short-scan traps.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/uboot/README.md)
+- `source`: [Provenance of the vendored EDK II package \(framework commit f85b5a6\) and what the payload takes from it.](https://github.com/HuajiFruit/UniXNU-sirius/blob/b9922c1fe7442009f0c44e78a57366c993fad772/efi/README.md)
 
 </div>

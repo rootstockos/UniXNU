@@ -575,6 +575,11 @@
     "title_zh": "Nothing Phone (2)（pong）"
   },
   {
+    "name": "pong-hxzbaka",
+    "title": "Nothing Phone (2): UniXNU UEFI bring-up (hxzbaka)",
+    "title_zh": "Nothing Phone (2): UniXNU UEFI bring-up (hxzbaka)"
+  },
+  {
     "name": "pong-y3d4",
     "title": "Nothing Phone (2): UniXNU UEFI bring-up (Y3d4)",
     "title_zh": "Nothing Phone (2): UniXNU UEFI bring-up (Y3d4)"
@@ -703,6 +708,11 @@
     "name": "songyuan-aogg2023",
     "title": "Redmi K90 Pro Max (songyuan) (aogg2023)",
     "title_zh": "Redmi K90 Pro Max (songyuan) (aogg2023)"
+  },
+  {
+    "name": "songyuan-wukawl",
+    "title": "Redmi K90 Pro Max (songyuan) (WUKAWL)",
+    "title_zh": "Redmi K90 Pro Max (songyuan) (WUKAWL)"
   },
   {
     "name": "sweet",

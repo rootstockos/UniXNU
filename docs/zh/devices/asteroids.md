@@ -6,7 +6,7 @@
 
 Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UFS userdata partition, with shared SM7635 support and board-owned storage, GPU, input and power integration. Bring-up runs as numbered staged tests; their results are in docs/asteroids-gpu-gen8.md and docs/asteroids-touch.md of rootstockos/iosonandng.
 
-源记录: [porting.toml](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/porting.toml), `caf9b5b1285f044e87930342b00721687ccb85ac`.
+源记录: [porting.toml](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/porting.toml), `bd618af4eb9377dafaa512a07c2991c8e2469444`.
 
 本页按设备记录自动生成。
 
@@ -22,7 +22,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 | [GPU](#gpu) | `implemented` |
 | [clock](#clock) | `device-verified` |
 | [网络](#network) | `planned` |
-| [音频](#audio) | `planned` |
+| [音频](#audio) | `implemented` |
 | [电源](#power) | `implemented` |
 | [镜像组装](#packaging) | `implemented` |
 | [诊断](#diagnostics) | `implemented` |
@@ -71,7 +71,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `source`: [Format 2 board configuration with the SM7635 SoC and 21H461 OS profiles.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/board.toml)
+- `source`: [Format 2 board configuration with the SM7635 SoC and 21H461 OS profiles.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/board.toml)
 
 ## 固件与启动 {#firmware}
 
@@ -111,7 +111,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `source`: [\[bootimg\] and \[firmware\] select uefi-asteroids and the payload in the kernel image.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/board.toml)
+- `source`: [\[bootimg\] and \[firmware\] select uefi-asteroids and the payload in the kernel image.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/board.toml)
 
 ## CPU 与中断 {#cpu}
 
@@ -152,7 +152,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `source`: [EPSS CPU governor with touch boost and frame floor.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/package/CpuFreqProbe.cpp)
+- `source`: [EPSS CPU governor with touch boost and frame floor.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/package/CpuFreqProbe.cpp)
 
 ## 内存与 DMA {#memory}
 
@@ -189,7 +189,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `source`: [Memory node for the XNU window's DRAM bank.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/dts/asteroids.dts)
+- `source`: [Memory node for the XNU window's DRAM bank.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/dts/asteroids.dts)
 
 ## 存储与根卷 {#storage}
 
@@ -229,7 +229,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `device`: [T29 booted iPadOS 17.7.11 from the UFS root with persistent Data to the first picture.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/board.toml)
+- `device`: [T29 booted iPadOS 17.7.11 from the UFS root with persistent Data to the first picture.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/board.toml)
   Command: <code>fastboot boot local/unixnu-asteroids-t29-boot.img</code>. Revision: `adf900cf453a6b318864913757f588c9f661596f`.
 
 ## 显示 {#display}
@@ -257,6 +257,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 - The CPU copy \(143-285 ms a frame\) mapped the surfaces cacheable without invalidation and showed stale patches; the GPU copy removes both.
 - GopFramebuffer 33e941a's direct scanout needs ShengUfs's display SMMU window \(native\_ufs\_dpu\_map\); our NativeUfs fork has none, so package/LegacyDisplayStubs.c supplies weak zero stand-ins that keep it off.
 - T40c \(2026-10-27\): BootProgress.c's cpu0\_park defaults off \(see cpu\).
+- T40k-T42 \(2026-10-27\): zero copy on the 3a. NativeUfs sheng-dpu-linux=1 sets the display bank up as Linux does: CBA2R and CBAR written \(the apps SMMU is qcom,virt-smmu and the hypervisor attaches the bank on that write\), TCR2 with the ASID size and SEP, cached inner-shareable walks with T0SZ 28, TTBR0 with an ASID. The bank then took stage 1 without a fault \(T40k\), where every earlier setup faulted at level 0, even with blocks lacking the access flag \(T40i-af\). T41: 1018 direct flips, 4.4 ms mean latch, once startDirect waited for the bank \(40 ms\); frames showed half drawn \(the wallpaper without the app\), so T42 flips only once the GPU's completed fence reaches the newest fence submitted at the swap.
 
 ### 完成条件
 
@@ -272,7 +273,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `device`: [T34b: GPU copy to the panel, no tearing or stale patches, stable.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/board.toml)
+- `device`: [T34b: GPU copy to the panel, no tearing or stale patches, stable.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/board.toml)
   Command: <code>fastboot boot local/unixnu-asteroids-t34b-boot.img</code>. Revision: `e022e84a9721ea6408ea12665b5a23e9b89fc5f6`.
 
 ## 输入 {#input}
@@ -313,7 +314,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `device`: [Touch input works on the desktop \(stage 6\).](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/package/AsteroidsTouchProbe.cpp)
+- `device`: [Touch input works on the desktop \(stage 6\).](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/package/AsteroidsTouchProbe.cpp)
   Command: <code>fastboot boot local/unixnu-asteroids-t34b-boot.img</code>. Revision: `e022e84a9721ea6408ea12665b5a23e9b89fc5f6`.
 
 ## GPU {#gpu}
@@ -358,7 +359,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `device`: [GPU compositing and the GPU panel copy run stable.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/package/GpuPowerProbe.cpp)
+- `device`: [GPU compositing and the GPU panel copy run stable.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/package/GpuPowerProbe.cpp)
   Command: <code>fastboot boot local/unixnu-asteroids-t34b-boot.img</code>. Revision: `e022e84a9721ea6408ea12665b5a23e9b89fc5f6`.
 
 ## clock {#clock}
@@ -399,7 +400,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `device`: [T39e: the time set in Settings survived a restart; Settings &gt; Date &amp; Time opens.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/board.toml)
+- `device`: [T39e: the time set in Settings survived a restart; Settings &gt; Date &amp; Time opens.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/board.toml)
   Command: <code>fastboot boot local/unixnu-asteroids-t39e-boot.img</code>. Revision: `e4d1092cc3d051617ee88858b153ed2ba0d456fd`.
 
 ## 网络 {#network}
@@ -440,24 +441,35 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ## 音频 {#audio}
 
-`planned`
+`implemented`
 
 ### 硬件与依赖
 
-- The audio DSP and its firmware; sheng's ADSP, GLINK and QRTR stack is the reference.
+- The audio DSP and its firmware; sheng's ADSP, GLINK, QRTR, GPR and AudioReach stack is the reference.
+- The 3a's amplifier settings container \(vendor/firmware/tfa98xx.cnt, proprietary-files.txt\), turned into build/asteroids-tfa/AsteroidsTfaConfig.h by scripts/prepare-asteroids-tfa.py.
 
 ### 配置
 
-- None yet.
+- sheng-audio takes bits \(sheng-adsp=2 is required, the default\): any nonzero value serves the audio service, 2 plays a 1.5 s 750 Hz test tone at boot, 8 runs the lock sound test.
+- sheng-audio-pa moves the DSP period buffer \(default 0xe6200000, the splash region's tail\); sheng-audio-tone-ms and sheng-audio-atten set the tone.
+- asteroids-audio-i2s = interface \| data lines &lt;&lt; 8 \| bits &lt;&lt; 16 \(default primary MI2S, SD1, 32-bit: the amplifiers take their data on gpio17\); asteroids-audio-prm bits \(default 3\): 1 LPASS core vote, 2 MI2S bit clock request.
+- asteroids-mic=&lt;stage&gt; \(default 0, with sheng-audio\) brings up the WCD9378 microphone path in stages: 1 rails \(ldob7, ldob8\) and codec reset \(gpio162\), 2 PRM votes and VA/TX core clocks, 3 LPI SoundWire pins and VA/TX macro clocks, 4 VA SoundWire master \(0x33b0000, v1.7\) and enumeration, 5 codec init \(SCP setup, io\_init, SDCA class load\), 6 capture path \(ports, micbias 1, SmartMIC0 sequencer, TX decimator 0\), 7 DSP capture graphs and a 2 s capture test, 8 capture for the plug-in. asteroids-mic-port = sample interval \| offset1 &lt;&lt; 8 \| lane &lt;&lt; 16 \(default 1 \| 1 &lt;&lt; 8\). asteroids-mic-mux=1 switches the VA macro to its own core clock \(0x3420000 = 1\) as the vendor clock manager does \(default off\).
+- The GPU addon carries sheng's audio server plug-in as audio/ShengAudio.driver \(scripts/build-asteroids-metal-plugin.py builds it with scripts/build-sheng-audio-hal.py unless --no-audio, and adds its CDHash to the owner trust module\); patches/xnu/zzyd-board-audio-addon-mount.patch mounts audio/ over /System/Library/Audio/Plug-Ins/HAL.
 
 ### 操作步骤
 
-- Boot the ADSP from its firmware partition as sheng does.
+- Read the \[audio\] and \[amps\] rows: stage, DSP status, amplifiers found \(amps=3: both\), clocks stable \(lock=\), errors, SMMU result, I2C engine, PRM results \(bus= second word\), I2C failures.
+- Run scripts/check-audioreach-host.py after changing the graph commands.
 
 ### 开发经验
 
-- No audio path yet.
 - T38 ports sheng's audio DSP bring-up \(AdspProbe.cpp, sheng-adsp=1 survey, 2 start\) with the 3a's IPCC \(0x405000\), carveouts \(0x99300000, 0x99280000\) and crash-reason partition; the firmware comes from modem\_a \(LUN 4\) through NativeUfs's native\_ufs\_part\_find/read \(rootstockos/NativeUfs efa8271, from UniXNU's ShengUfs\).
+- T41: speakers are two NXP TFA9873 \(P 0x34 slot 0, S 0x35 slot 1\) on QUPv3 wrapper 1 SE6 \(SE13, 0x898000, gpio59/60\), reset gpio141/142 \(active high\), fed by primary MI2S \(gpio15-18, function 2\) as two 32-bit slots at 48 kHz. The container carries no amplifier firmware \(a dummy patch\), only bitfield settings.
+- T41: the microphone is AMIC1 of a WCD9378 \(mixer\_paths handset-mic: ADC1, MIC BIAS1 by the card routing, ADC\_LP, volume 6\) on the VA macro's SoundWire master; the handset mic back end is CODEC\_DMA-LPAIF\_RXTX-TX-3 as on sheng. The codec register recipe is the July 2026 LKML WCD9378 TX driver \(v2, paged SDCA registers, built-in power sequencers\); the master is v1.7 \(apps command FIFO at 0x31c\).
+- T41: package/AsteroidsAudioProbe.cpp is sheng's AudioProbe.cpp with the 3a's board steps and the TFA9873 programs \(AsteroidsTfa9873.c\) in place of the CS35L43's; the speaker device runs 32-bit while the stream stays 16-bit \(the playback converter widens it\). The amplifiers power up after the graphs start, since they wait for the bit clock. No microphone path.
+- T40k \(2026-10-27\): the speaker path ran end to end \(DSP graphs, the service, the plug-in, a 48 kHz stream without gaps; both TFA9873 rev B found, clocks and PLL locked\) but was silent: on I2S0 SD0 the amplifiers got the clocks and no data. T40k-spk-sd1 \(asteroids-audio-i2s=0x200200\) played the boot tone and iOS sound through both speakers: the amplifiers take their data on SD1 \(gpio17\), the default since T41.
+- T41: TFA9873 STATUS0 bits 1, 2 and 4 \(DCOCPOK, OTDS, UVDS\) are ok flags in NXP's field list, not alarms; \[audio\] err= counts real alarms only \(OCDS, MANALARM, NOCLK, TDMERR or a missing ok flag\).
+- T41, T41-mux: mic stage 4 fails. The rails are voted, the PRM grants the macro and codec votes and the VA/TX core clocks, the LPI pins and macro clocks are set \(VA SWR\_CONTROL 1\) and the master \(v1.7\) keeps its settings, but COMP\_STATUS never shows the link up, no interrupt fires and no device attaches. With asteroids-mic-mux=1 \(the VA clock source switch\) the master's registers read back 0, so the switch stays off. T42 adds \[mic extra\]: the codec reset pin read back, COMP\_STATUS over time and, with asteroids-mic-pmic=1, the codec's LDOs from the PMIC.
 
 ### 完成条件
 
@@ -465,15 +477,19 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 当前范围
 
-- No audio.
+- The microphone does not work yet: stage 4 \(SoundWire enumeration\) fails, so the plug-in's input stream stays silent.
+- The master's port timing is not taken from the vendor driver \(not in the published tree\): asteroids-mic-port tunes it.
 
 ### 下一步
 
-- Port the ADSP start after the battery work.
+- Boot T42 with asteroids-mic=4 and asteroids-mic-pmic=1 and read \[mic extra\]: whether the codec's LDOs are on and its reset is released tells whether stage 4 waits on the codec's power or on the bus.
 
 ### 证据
 
-按下一步操作收集证据。
+- `host`: [PASS: 207 AudioReach packet checks, including the 3a's primary MI2S port and the 32-bit speaker device format.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/scripts/check-audioreach-host.py)
+  Command: <code>python3 scripts/check-audioreach-host.py</code>. Revision: `b1621b32a2513ba8e2c4c599d4f4baf602a7369a`.
+- `device`: [T40k-spk-sd1: the boot tone and iOS sounds played through both speakers; \[amps\] showed the boost converters active and \[audio-io\] 8.3 M frames without gaps in 494 s.](https://github.com/rootstockos/UniXNU-asteroids/commit/b1621b32a2513ba8e2c4c599d4f4baf602a7369a)
+  Command: <code>fastboot boot with boot args sheng-audio=3 asteroids-audio-i2s=0x200200 sheng-audio-tone-ms=4000</code>. Revision: `49ec1ccb18fd6b7ddd23b25b2c4ae96cd084ad1a`.
 
 ## 电源 {#power}
 
@@ -512,7 +528,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `device`: [T29: with the stand-in, SpringBoard boots to the first picture.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/package/KeyStoreProbe.cpp)
+- `device`: [T29: with the stand-in, SpringBoard boots to the first picture.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/package/KeyStoreProbe.cpp)
   Command: <code>fastboot boot local/unixnu-asteroids-t29-boot.img</code>. Revision: `adf900cf453a6b318864913757f588c9f661596f`.
 
 ## 镜像组装 {#packaging}
@@ -549,7 +565,7 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `source`: [Board patch series after the arch, SoC and OS series.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/patches/xnu/series)
+- `source`: [Board patch series after the arch, SoC and OS series.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/patches/xnu/series)
 
 ## 诊断 {#diagnostics}
 
@@ -586,6 +602,6 @@ Nothing Phone \(3a\) runs the unchanged iPad7,1 iPadOS 17.7.11 image from its UF
 
 ### 证据
 
-- `source`: [Live page and banner rows.](https://github.com/rootstockos/UniXNU-asteroids/blob/caf9b5b1285f044e87930342b00721687ccb85ac/package/BootProgress.c)
+- `source`: [Live page and banner rows.](https://github.com/rootstockos/UniXNU-asteroids/blob/bd618af4eb9377dafaa512a07c2991c8e2469444/package/BootProgress.c)
 
 </div>
