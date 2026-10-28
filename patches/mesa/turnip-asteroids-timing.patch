@@ -66,7 +66,7 @@ index 6b9452e..d0218f5 100644
  
     trace_start_clear_depth_stencil_image(&cmd->trace, &cmd->cs, cmd,
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
-index aba5132..890154e 100644
+index aba5132..3e831f7 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
 @@ -7,6 +7,9 @@
@@ -91,30 +91,30 @@ index aba5132..890154e 100644
 +static uint32_t tu_dw_counts[TU_DW_KINDS], tu_dw_buffers, tu_dw_unrun, tu_dw_dropped;
 +
 +static void
-+tu_dw_timestamp(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint64_t iova)
++tu_dw_timestamp(struct tu_cmd_buffer *cmd, struct tu_cs *cs, uint64_t iova, bool end)
 +{
-+   if (cmd->device->physical_device->info->chip >= 7) {
-+      tu_cs_emit_pkt7(cs, CP_EVENT_WRITE7, 3);
-+      tu_cs_emit(cs, CP_EVENT_WRITE7_0(.event = RB_DONE_TS, .write_src = EV_WRITE_ALWAYSON, .write_dst = EV_DST_RAM,
-+                                       .write_enabled = true).value);
-+      tu_cs_emit_qw(cs, iova);
-+   } else {
-+      tu_cs_emit_pkt7(cs, CP_EVENT_WRITE, 4);
-+      tu_cs_emit(cs, CP_EVENT_WRITE_0_EVENT(RB_DONE_TS) | CP_EVENT_WRITE_0_TIMESTAMP);
-+      tu_cs_emit_qw(cs, iova);
-+      tu_cs_emit(cs, 0x00000000);
-+   }
++   /* T56: the always-on counter copied to memory, as the autotune samples it (tu_autotune.cc emit_metric_timestamp); an end stamp
++    * waits for the GPU to go idle first, so it lands after the work. T55's CP_EVENT_WRITE7 RB_DONE_TS with the always-on source hung
++    * the A810 on the render server's first frame. */
++   if (end)
++      tu_cs_emit_wfi(cs);
++   tu_cs_emit_pkt7(cs, CP_REG_TO_MEM, 3);
++   tu_cs_emit(cs, CP_REG_TO_MEM_0_REG(TU_CALLX(cmd->device, __CP_ALWAYS_ON_COUNTER)({}).reg) | CP_REG_TO_MEM_0_CNT(2) |
++                     CP_REG_TO_MEM_0_64B);
++   tu_cs_emit_qw(cs, iova);
 +}
 +
 +unsigned
 +tu_dw_time_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs, unsigned kind)
 +{
-+   /* Only where TU_DW_TIME is set (the asteroids Metal plugin sets it in the render server with asteroids-tu-time=1): T55 timed every
-+    * process and the wallpaper poster extensions aborted on every launch. */
++   /* Only where TU_DW_TIME is set (the asteroids Metal plugin sets it in the render server with asteroids-tu-time=<passes|all>). */
++   /* TU_DW_TIME=passes times render passes only; any other value also blits, copies, resolves and clears. */
 +   static int enabled = -1;
-+   if (enabled < 0)
-+      enabled = getenv("TU_DW_TIME") != NULL;
-+   if (!enabled)
++   if (enabled < 0) {
++      const char *mode = getenv("TU_DW_TIME");
++      enabled = !mode ? 0 : !strcmp(mode, "passes") ? 1 : 2;
++   }
++   if (!enabled || (enabled == 1 && kind != TU_DW_PASS_GMEM && kind != TU_DW_PASS_SYSMEM))
 +      return ~0u;
 +   if (cmd->dw_slot_count >= TU_DW_MAX_SLOTS) {
 +      p_atomic_inc(&tu_dw_dropped);
@@ -128,7 +128,7 @@ index aba5132..890154e 100644
 +   cmd->dw_slots[slot].map = memory.map;
 +   cmd->dw_slots[slot].iova = memory.iova;
 +   cmd->dw_slots[slot].kind = (uint8_t) kind;
-+   tu_dw_timestamp(cmd, cs, memory.iova);
++   tu_dw_timestamp(cmd, cs, memory.iova, false);
 +   return slot;
 +}
 +
@@ -137,7 +137,7 @@ index aba5132..890154e 100644
 +{
 +   if (slot >= cmd->dw_slot_count)
 +      return;
-+   tu_dw_timestamp(cmd, cs, cmd->dw_slots[slot].iova + 8);
++   tu_dw_timestamp(cmd, cs, cmd->dw_slots[slot].iova + 8, true);
 +}
 +
 +void
