@@ -56,6 +56,23 @@ build = ["build-arm-driver.py", "QcomPmicRtc"]
 outputs = ["build/qcom-pmic-rtc/libQcomPmicRtc.a"]
 
 [[component]]
+id = "FocalTechSpiTouch"
+kind = "driver"
+function = "FocalTech touch controller SPI frames, CRC-16 and touch reports"
+scope = "controller"
+path = "drivers/FocalTechSpiTouch"
+hardware = ["FocalTech FT3683G (SPI, reports from register 0x01)"]
+os_abi = ["ipados-17.7.11-21H461"]
+board_dependencies = ["an SPI transfer callback (QcomGeniSpi)", "power, reset and pins", "the touch coordinate globals"]
+verified_devices = ["asteroids"]
+dependencies = ["QcomGeniSpi"]
+source_files = ["FtsSpi.c"]
+runtime_identifiers = ["FtsSpi.c"]
+build_stage = "embedded"
+build = []
+outputs = []
+
+[[component]]
 id = "Pl031Rtc"
 kind = "driver"
 function = "ARM PrimeCell PL031 real-time clock (IORTC)"
