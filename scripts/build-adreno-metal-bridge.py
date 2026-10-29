@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the native Metal bridge (drivers/AdrenoMetal/bridge/NativeMetalBridge.rs): the pinned metal2vulkan runtime behind a C ABI, as a static library.
 
---target ios (default) cross-builds for arm64-apple-ios17.0, --target host for the macOS host simulation. The runtime's own example library
+--target ios (default) cross-builds for arm64-apple-ios17.0, --target ios27 for arm64e-apple-ios27.0 (nightly, std built from source), --target host for the macOS host simulation. The runtime's own example library
 (runtime_examples.ll) and its function-constant fixture are assembled to AIR with llvm-as and embedded for the self-tests. Only generated build files hold local paths; nothing here
 is committed. Output: build/adreno-metal-bridge/<target>/libadreno_metal_bridge.a"""
 import argparse
@@ -17,21 +17,39 @@ ROOT = Path(__file__).resolve().parents[1]
 PIN = json.loads((ROOT / 'scripts/data/gpu-metal-vulkan-inputs.json').read_text())['translator']['commit']
 SOURCE = ROOT / '.cache/gpu-reference/metal2vulkan'
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--target', choices=['ios', 'host'], default='ios')
+parser.add_argument('--target', choices=['ios', 'ios27', 'host'], default='ios')
 parser.add_argument('--manifest-only', action='store_true',
                     help='write build/adreno-metal-bridge/Cargo.toml (patched source, fixtures) and stop before cargo, for `cargo fetch`')
 args = parser.parse_args()
 if subprocess.check_output(['git', '-C', str(SOURCE), 'rev-parse', 'HEAD'], text=True).strip() != PIN:
     raise SystemExit('Translator revision differs from the qualified source pin')
 PATCHES = [ROOT / 'drivers/AdrenoMetal/bridge/patches' / name for name in [
-    # Ported onto development (asteroids T62): each stacks on the source the ones before it leave.
+    # Each stacks on the source the ones before it leave.
     '0001-optional-constant-output-members.patch', '0002-resource-wait-storage-dependencies.patch',
-    '0003-fold-constant-global-field-loads.patch', '0004-skip-draws-without-a-pipeline.patch',
-    '0005-two-plane-shadow-as-memory-lies.patch', '0006-padded-rows-policy.patch', '0007-batch-barriers-on-the-stack.patch',
-    '0008-key-hash-the-draw-path-maps.patch', '0009-cache-device-entry-point-priming.patch', '0010-skip-unchanged-rebinds.patch',
-    '0011-optional-shader-cache-directory.patch', '0012-srgb-extended-range-blend-rounded-model.patch', '0013-llvm-bitreverse.patch',
-    '0014-growing-memory-blocks.patch', '0015-patch-with-no-control-points.patch',
-    '0016-heap-texture-size-a-multiple-of-its-alignment.patch', '0017-core-image-kernel-libraries.patch']]
+    '0003-cache-device-entry-point-priming.patch', '0004-fold-constant-global-field-loads.patch',
+    # A draw whose pipeline the driver refused binds nothing (int-170: tu_CmdBindPipeline in the render server).
+    '0005-skip-draws-without-a-pipeline.patch',
+    # A batch's barrier globals on the stack, and the neutral resources' maps by the runtime's key hash.
+    '0006-batch-barriers-and-key-hash-neutral-maps.patch',
+    # From the DroidVM board's translator patches: a cache directory a sandboxed process may not write, llvm.bitreverse, a patch
+    # function with no control points, and Core Image kernel libraries (file_type 1) loaded as Metal loads them.
+    '0007-optional-shader-cache-directory.patch', '0008-llvm-bitreverse.patch', '0009-patch-with-no-control-points.patch',
+    '0010-core-image-kernel-libraries.patch',
+    # A two-plane surface's shadow starts as its memory lies; the Astronomy wallpaper's extended-range sRGB blends take the rounded
+    # model; pooled blocks start at 4 MiB and grow (the render server alone held 1 GiB of wired memory).
+    '0011-two-plane-shadow-as-memory-lies.patch', '0012-srgb-extended-range-blend-rounded-model.patch',
+    '0013-growing-memory-blocks.patch',
+    # HostPageTexturePolicy::InPlaceWrites: textures over surfaces and padded buffers are images over their bytes, rendered and written
+    # too, where their tile stores stay within their rows, instead of shadows copied in and out every pass.
+    '0014-in-place-written-textures.patch', '0015-in-place-written-host-page-textures.patch',
+    # Device::refuse_rebinds: no call logs or per-command holds of no-copy buffers, which only a rebind or a detach reads.
+    '0016-refuse-rebinds.patch',
+    # A read-only source of shader-cache entries behind the directory (the pipelines compiled ahead on the host, read on demand from the
+    # userdata import region): an entry the directory lacks is asked of it, and nothing is copied into the directory.
+    '0017-shader-cache-fallback-source.patch',
+    # A heap texture's own-device answer rounded up to a multiple of its alignment, as Metal's answers are: a heap sized as the sum of
+    # its textures' answers then holds them (iconservicesagent's Core Image heaps ran out: OutOfMemory(Heap)).
+    '0018-heap-texture-size-a-multiple-of-its-alignment.patch']]
 
 
 def git_tree(*steps):
@@ -64,6 +82,9 @@ air = out / 'runtime_examples.air'
 subprocess.run([llvm_as, '-o', air, SOURCE / 'crates/metal2vulkan-validation/fixtures/public/examples/runtime_examples.ll'], check=True)
 fc_air = out / 'function_constant.air'
 subprocess.run([llvm_as, '-o', fc_air, SOURCE / 'crates/metal2vulkan-validation/fixtures/public/kernel_function_constant_gate_fold.ll'], check=True)
+# The GPU scanout's half-float conversion kernel (GpuScanoutPresenter.h), hand-written AIR.
+scanout_air = out / 'scanout_convert.air'
+subprocess.run([llvm_as, '-o', scanout_air, ROOT / 'drivers/AdrenoMetal/shaders/scanout_convert.ll'], check=True)
 manifest = out / 'Cargo.toml'
 manifest.write_text('\n'.join([
     '[package]', 'name = "adreno-metal-bridge"', 'version = "0.1.0"', 'edition = "2024"', 'rust-version = "1.98"', '[workspace]',
@@ -75,27 +96,33 @@ manifest.write_text('\n'.join([
     # The runtime hashes every shader-cache key and entry; without asm, sha2 0.10 on aarch64 is the portable software rounds, not the
     # ARMv8 SHA-256 instructions every target CPU has (cpufeatures answers sha2 true on Apple platforms).
     'sha2 = { version = "0.10", features = ["asm"] }',
-    '[profile.release]', 'panic = "unwind"', 'debug = 1', '',
+    # The render server's display thread spends most of a frame in the runtime, much of it in small functions across the
+    # translator's crates: one optimisation unit with link-time optimisation lets them inline across crate boundaries.
+    '[profile.release]', 'panic = "unwind"', 'debug = 1', 'lto = "fat"', 'codegen-units = 1', '',
 ]))
 if args.manifest_only:
     print(manifest)
     raise SystemExit(0)
-triple = 'aarch64-apple-ios' if args.target == 'ios' else 'aarch64-apple-darwin'
+triple = {'ios': 'aarch64-apple-ios', 'ios27': 'arm64e-apple-ios', 'host': 'aarch64-apple-darwin'}[args.target]
+# arm64e has no prebuilt std: it is built from rust-src (RUSTC_BOOTSTRAP for -Z); the iPadOS 27 processes that load the plugin are arm64e.
+cargo = ['cargo', '+1.98.0'] + (['-Z', 'build-std=std,panic_unwind'] if args.target == 'ios27' else [])
 # The translator source the runtime is built from (its pin and recorded patches), which keys the shader cache: shader priming keeps what it
 # finished while this stays the same (PrimeShaders.h).
 runtime_id = hashlib.sha256((PIN + '\n' + states[-1]).encode()).hexdigest()[:32]
-env = dict(os.environ, NMB_RUNTIME_ID=runtime_id, NMB_FIXTURE_AIR=str(air), NMB_FC_AIR=str(fc_air), IPHONEOS_DEPLOYMENT_TARGET='17.0', MACOSX_DEPLOYMENT_TARGET='14.0')
+env = dict(os.environ, NMB_RUNTIME_ID=runtime_id, NMB_FIXTURE_AIR=str(air), NMB_FC_AIR=str(fc_air), NMB_SCANOUT_AIR=str(scanout_air), IPHONEOS_DEPLOYMENT_TARGET='27.0' if args.target == 'ios27' else '17.0', MACOSX_DEPLOYMENT_TARGET='14.0')
+if args.target == 'ios27':
+    env['RUSTC_BOOTSTRAP'] = '1'
 target_dir = ROOT / 'build/m2v-target'
 log = out / ('build-%s.log' % args.target)
 # cargo's output goes to the console as it runs (CI logs show progress) and to the log file.
-with log.open('w') as stream, subprocess.Popen(['cargo', '+1.98.0', 'build', '--release', '--manifest-path', manifest, '--target', triple,
-                                                '--target-dir', target_dir], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                               text=True, errors='replace') as cargo:
-    for line in cargo.stdout:
+with log.open('w') as stream, subprocess.Popen(cargo + ['build', '--release', '--manifest-path', manifest, '--target', triple,
+                                                        '--target-dir', target_dir], env=env, stdout=subprocess.PIPE,
+                                               stderr=subprocess.STDOUT, text=True, errors='replace') as build:
+    for line in build.stdout:
         sys.stdout.write(line)
         sys.stdout.flush()
         stream.write(line)
-    returncode = cargo.wait(timeout=1800)
+    returncode = build.wait(timeout=1800)
 if returncode:
     raise SystemExit(f'cargo failed ({returncode}); full output above and in {log}')
 library = target_dir / triple / 'release/libadreno_metal_bridge.a'
