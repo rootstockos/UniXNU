@@ -1,0 +1,17 @@
+diff --git a/src/freedreno/common/freedreno_devices.py b/src/freedreno/common/freedreno_devices.py
+index f74587c..8f45a84 100644
+--- a/src/freedreno/common/freedreno_devices.py
++++ b/src/freedreno/common/freedreno_devices.py
+@@ -1332,6 +1332,12 @@ add_gpus([
+             gmem_vpc_attr_buf_size = 16384,
+             gmem_vpc_pos_buf_size = 12288,
+             gmem_vpc_bv_pos_buf_size = 20480,
++            # a8xx_gen1's sysmem caches and VPC buffers take 608 KiB, past this
++            # GPU's 576 KiB of GMEM: the depth CCU offset, laid out last from the
++            # top, wrapped below zero and depth tests in sysmem passes read
++            # garbage. Half the color cache, as a7xx's 64 KiB, fits them.
++            sysmem_ccu_color_cache_fraction = CCUColorCacheFraction.HALF.value,
++            sysmem_per_ccu_color_cache_size = 64 * 1024,
+             # This is possibly also needed for a830 (and all of a8xx),
+             # move to a8xx_base if confirmed needed for a830.
+             has_fs_tex_prefetch = False,
