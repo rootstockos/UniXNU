@@ -49,10 +49,7 @@ PATCHES = [ROOT / 'drivers/AdrenoMetal/bridge/patches' / name for name in [
     '0017-shader-cache-fallback-source.patch',
     # A heap texture's own-device answer rounded up to a multiple of its alignment, as Metal's answers are: a heap sized as the sum of
     # its textures' answers then holds them (iconservicesagent's Core Image heaps ran out: OutOfMemory(Heap)).
-    '0018-heap-texture-size-a-multiple-of-its-alignment.patch',
-    # A pass of colors alone renders its opaque draws' depth prepass into a 16-bit depth of its own: a fragment a later opaque
-    # draw covers is never shaded, as on Apple's GPUs (asteroids T65-samples: at least 44 % of the render server's samples were).
-    '0019-opaque-draw-depth-prepass.patch']]
+    '0018-heap-texture-size-a-multiple-of-its-alignment.patch']]
 
 
 def git_tree(*steps):
