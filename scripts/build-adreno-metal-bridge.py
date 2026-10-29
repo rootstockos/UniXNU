@@ -49,7 +49,14 @@ PATCHES = [ROOT / 'drivers/AdrenoMetal/bridge/patches' / name for name in [
     '0017-shader-cache-fallback-source.patch',
     # A heap texture's own-device answer rounded up to a multiple of its alignment, as Metal's answers are: a heap sized as the sum of
     # its textures' answers then holds them (iconservicesagent's Core Image heaps ran out: OutOfMemory(Heap)).
-    '0018-heap-texture-size-a-multiple-of-its-alignment.patch']]
+    '0018-heap-texture-size-a-multiple-of-its-alignment.patch',
+    # The runtime's live device memory in bytes by kind (pooled, placed, empty kept, dedicated, imported), for the frontend's MEM row.
+    '0019-memory-census-bytes.patch',
+    # The call stacks that allocated device memory of 4 MiB or more, by bytes, for the frontend's MA rows.
+    '0020-allocation-sites.patch',
+    # A written texture over host pages stays in place at any size: Turnip renders a linear host image of partial tile blocks without
+    # tile memory (patches/mesa/turnip-render-mode-for-attachment-memory.patch); its shadow merged every pass back through 94 MB.
+    '0021-written-host-page-textures-in-place-at-any-size.patch']]
 
 
 def git_tree(*steps):

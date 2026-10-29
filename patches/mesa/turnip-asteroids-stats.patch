@@ -1,5 +1,5 @@
 diff --git a/src/freedreno/vulkan/tu_clear_blit.cc b/src/freedreno/vulkan/tu_clear_blit.cc
-index 1d33085..6b9452e 100644
+index ce3eca9..e39a9ae 100644
 --- a/src/freedreno/vulkan/tu_clear_blit.cc
 +++ b/src/freedreno/vulkan/tu_clear_blit.cc
 @@ -2731,6 +2731,7 @@ tu_CmdBlitImage2(VkCommandBuffer commandBuffer,
@@ -59,15 +59,13 @@ index 1d33085..6b9452e 100644
     for (uint32_t j = 0; j < attachmentCount; j++) {
        if ((pAttachments[j].aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) == 0)
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
-index 60ad3a8..aba5132 100644
+index 33a22aa..48eacad 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
-@@ -4050,7 +4050,26 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
-    tu_autotune::rp_key_opt rp_key = cmd_buffer->device->autotune->emit_preempt_latency_tracking_rp_hash(cmd_buffer);
- 
+@@ -4098,6 +4098,24 @@ tu_cmd_render(struct tu_cmd_buffer *cmd_buffer,
     tu_autotune::rp_ctx_t rp_ctx = NULL;
--   if (use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key))
-+   const bool sysmem = use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key);
+    const bool sysmem = use_sysmem_rendering(cmd_buffer, &rp_ctx, rp_key);
+    tu_note_render_mode(cmd_buffer, sysmem);
 +   cmd_buffer->dw_stats.passes++;
 +   cmd_buffer->dw_stats.sysmem += sysmem;
 +   if (sysmem) {
@@ -86,11 +84,10 @@ index 60ad3a8..aba5132 100644
 +   }
 +   cmd_buffer->dw_stats.area += (uint64_t)cmd_buffer->state.render_areas[0].extent.width *
 +                                cmd_buffer->state.render_areas[0].extent.height;
-+   if (sysmem)
+    if (sysmem)
        tu_cmd_render_sysmem<CHIP>(cmd_buffer, rp_ctx);
     else
-       tu_cmd_render_tiles<CHIP>(cmd_buffer, rp_ctx, fdm_offsets);
-@@ -4344,6 +4363,7 @@ tu_cmd_buffer_begin(struct tu_cmd_buffer *cmd_buffer,
+@@ -4392,6 +4410,7 @@ tu_cmd_buffer_begin(struct tu_cmd_buffer *cmd_buffer,
  {
     vk_command_buffer_begin(&cmd_buffer->vk, pBeginInfo);
  
@@ -98,7 +95,7 @@ index 60ad3a8..aba5132 100644
     memset(&cmd_buffer->state, 0, sizeof(cmd_buffer->state));
     vk_dynamic_graphics_state_init(&cmd_buffer->vk.dynamic_graphics_state);
     cmd_buffer->vk.dynamic_graphics_state.vi = &cmd_buffer->state.vi;
-@@ -8309,6 +8329,7 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
+@@ -8357,6 +8376,7 @@ tu6_draw_common(struct tu_cmd_buffer *cmd,
                  /* note: draw_count is 0 for indirect */
                  uint32_t draw_count)
  {
@@ -131,10 +128,10 @@ index 17bebeb..6078c3d 100644
     struct tu_device *device;
  
 diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
-index 5d629cc..de921ab 100644
+index 0209408..bdc1332 100644
 --- a/src/freedreno/vulkan/tu_knl_darwin.cc
 +++ b/src/freedreno/vulkan/tu_knl_darwin.cc
-@@ -1268,11 +1268,12 @@ darwin_note_fence(uint32_t fence)
+@@ -1287,11 +1287,12 @@ darwin_note_fence(uint32_t fence)
   * waits for ring space) it waits for this client's oldest job, or yields when none is in flight. */
  static VkResult
  darwin_submit_chunk(struct tu_queue *queue, const NativeAdrenoAbiSubmitBuffer *entries,
@@ -148,7 +145,7 @@ index 5d629cc..de921ab 100644
     req.queue = 0;
     for (unsigned i = 0; i < count; i++)
        req.buffers[i] = entries[i];
-@@ -1319,6 +1320,14 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
+@@ -1338,6 +1339,14 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
     }
  
     uint32_t fence = 0;
@@ -163,7 +160,7 @@ index 5d629cc..de921ab 100644
     const unsigned total = util_dynarray_num_elements(&submit->commands, NativeAdrenoAbiSubmitBuffer);
     if (total) {
        const NativeAdrenoAbiSubmitBuffer *all =
-@@ -1326,7 +1335,7 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
+@@ -1345,7 +1354,7 @@ darwin_queue_submit(struct tu_queue *queue, void *_submit,
        for (unsigned at = 0; at < total; at += NativeAdrenoAbiMaxBuffers) {
           unsigned count = MIN2(total - at, (unsigned)NativeAdrenoAbiMaxBuffers);
           uint32_t chunk_fence = 0;

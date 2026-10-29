@@ -54,6 +54,7 @@
     "patches/mesa/turnip-empty-scissor.patch",
     "patches/mesa/turnip-builtin-shader-pack.patch",
     "patches/mesa/turnip-host-import-images.patch",
+    "patches/mesa/turnip-render-mode-for-attachment-memory.patch",
     "patches/mesa/turnip-asteroids-stats.patch",
     "patches/mesa/turnip-asteroids-timing.patch",
     "patches/mesa/turnip-a810-sysmem-ccu.patch"
