@@ -15,10 +15,30 @@ index ed89f75..efe746c 100644
  
  /* Modifier flags, these modify the behavior of the autotuner in a user-defined way. */
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
-index 143f748..7b8a632 100644
+index 143f748..e2fcc63 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
 +++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
-@@ -1458,17 +1458,10 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
+@@ -1447,6 +1447,19 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
+       return true;
+    }
+ 
++   /* A linear attachment over its owner's unpadded memory (the compositor's IOSurface on asteroids, 1080x2392, whose height is
++    * not whole GMEM blocks) renders in SYSMEM: its GMEM load and store take the 3D load and the unaligned CP blit store
++    * (tu_attachment_unpadded), and on the A810 they swapped red and blue in some passes (T70-T74; none with every pass in
++    * SYSMEM, T74s). SYSMEM writes its texels in place, and costs no more here (T59, T65-sysmem).
++    */
++   for (unsigned i = 0; i < cmd->state.pass->attachment_count; i++) {
++      const struct tu_image_view *iview = cmd->state.attachments[i];
++      if (iview && tu_attachment_unpadded(cmd, iview)) {
++         cmd->state.rp.gmem_disable_reason = "Unpadded linear attachment";
++         return true;
++      }
++   }
++
+    if (TU_DEBUG(GMEM)) {
+       cmd->state.rp.gmem_disable_reason = "TU_DEBUG(GMEM)";
+       return false;
+@@ -1458,17 +1471,10 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
        return true;
     }
  
