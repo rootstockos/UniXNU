@@ -1,0 +1,42 @@
+diff --git a/src/freedreno/vulkan/tu_autotune.cc b/src/freedreno/vulkan/tu_autotune.cc
+index ed89f75..efe746c 100644
+--- a/src/freedreno/vulkan/tu_autotune.cc
++++ b/src/freedreno/vulkan/tu_autotune.cc
+@@ -100,7 +100,10 @@ enum class tu_autotune::algorithm : uint8_t {
+    PREFER_SYSMEM = 3, /* Always use SYSMEM unless we have strong evidence that GMEM is better. */
+    PREFER_GMEM = 4,   /* Always use GMEM unless we have strong evidence that SYSMEM is better. */
+ 
+-   DEFAULT = BANDWIDTH, /* Default algorithm, used if no other is specified. */
++   /* Default algorithm, used if no other is specified. Profiled: the bandwidth estimate weighs neither the per-tile cost of a
++    * pass's draws nor that of loading and storing a linear attachment, and on asteroids' A810 it chose GMEM for passes of a few
++    * draws that took 2 ms there against 0.2 ms in SYSMEM; the profiled algorithm times both modes and keeps the faster. */
++   DEFAULT = PROFILED,
+ };
+ 
+ /* Modifier flags, these modify the behavior of the autotuner in a user-defined way. */
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index 143f748..7b8a632 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -1458,17 +1458,10 @@ use_sysmem_rendering(struct tu_cmd_buffer *cmd,
+       return true;
+    }
+ 
+-   /* An attachment in lazily allocated memory that has none yet (a transient attachment, Metal's memoryless texture) keeps none in
+-    * GMEM rendering, where it lives in tile memory alone, while SYSMEM rendering makes its memory for good
+-    * (tu_allocate_transient_attachments). The autotuner's choice, SYSMEM by default for passes of few draws, is a matter of bandwidth,
+-    * which does not weigh the memory: a 3048x2032 RGBA16F attachment is 48 MiB. */
+-   for (unsigned i = 0; i < cmd->state.pass->attachment_count; i++) {
+-      const struct tu_image_view *iview = cmd->state.attachments[i];
+-      if (iview && !(iview->image->vk.create_flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT) && iview->image->mem &&
+-          iview->image->mem->lazy && !iview->image->mem->bo)
+-         return false;
+-   }
+-
++   /* An attachment in lazily allocated memory that has none yet (Metal's memoryless texture) is not made to render in GMEM: on
++    * asteroids' A810 nearly every compositor pass has one, beside a linear host-page target it loads and stores, and a pass of a
++    * few draws there took 3 ms in GMEM against 0.2 ms in SYSMEM. The autotuner chooses; SYSMEM gives such an attachment its memory
++    * once (tu_allocate_transient_attachments). */
+    tu_autotune::render_mode optimal_mode =
+       cmd->device->autotune->get_optimal_mode(cmd, rp_ctx, rp_key);
+    bool use_sysmem = optimal_mode == tu_autotune::render_mode::SYSMEM;
