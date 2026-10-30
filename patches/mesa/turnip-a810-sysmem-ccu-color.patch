@@ -1,0 +1,29 @@
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 527a4d4..1789868 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -1683,9 +1683,23 @@ tu_physical_device_init(struct tu_physical_device *device,
+                                device->dev_id.chip_id, device->dev_id.gpu_id);
+    }
+ 
+-   const struct fd_dev_info info = fd_dev_info(&device->dev_id);
++   struct fd_dev_info info = fd_dev_info(&device->dev_id);
+    assert(info.chip);
+ 
++   /* asteroids: TU_DW_TRACE with c gives system-memory passes on the A810 (one CCU) the whole color cache, 128 KiB, and half the depth
++    * cache, 128 KiB, in place of turnip-a810-sysmem-ccu.patch's half color and whole depth: both fit its 576 KiB beside the 224 KiB
++    * of system-memory VPC buffers (480 KiB against 544), and the compositor's passes, which have no depth attachment, blend through
++    * twice the cache. THREE_QUARTER's encoding is a8xx_gen2's (EIGHTH here), so the depth cache takes HALF. */
++   {
++      const char *trace = getenv("TU_DW_TRACE");
++      if (trace && strchr(trace, 'c') && info.chip == 8 && info.num_ccu == 1) {
++         info.props.sysmem_ccu_color_cache_fraction = 0;   /* CCU_CACHE_SIZE_FULL */
++         info.props.sysmem_per_ccu_color_cache_size = 128 * 1024;
++         info.props.sysmem_ccu_depth_cache_fraction = 1;   /* CCU_CACHE_SIZE_HALF */
++         info.props.sysmem_per_ccu_depth_cache_size = 128 * 1024;
++      }
++   }
++
+    /* Print a suffix if raytracing is disabled by the SW fuse, in an attempt
+     * to avoid confusion when apps don't work.
+     */

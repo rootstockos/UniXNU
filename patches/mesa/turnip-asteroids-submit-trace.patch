@@ -1,0 +1,125 @@
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
+index e2fcc63..14bc19d 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.cc
++++ b/src/freedreno/vulkan/tu_cmd_buffer.cc
+@@ -4123,9 +4123,11 @@ static uint32_t tu_dw_size_passes[2], tu_dw_frag_n[2], tu_dw_frag_draws[2], tu_d
+ static bool tu_dw_alloc(struct tu_cmd_buffer *cmd, uint32_t dwords, struct tu_cs_memory *memory);
+ 
+ /* TU_DW_TRACE=<letters>: p passes, d draws, s each draw's samples passed (GPU counters around every draw), b shader binaries, t GMEM
+- * passes by stage, a blits, copies, resolves and clears too; "1" is pdb. */
++ * passes by stage, a blits, copies, resolves and clears too, q each kernel submission (tu_dw_trace_submit); "1" is pdb. Other
++ * letters are other readers' (c: tu_device.cc, h: the Metal bridge). */
+ enum {
+    TU_DW_TR_PASSES = 1, TU_DW_TR_DRAWS = 2, TU_DW_TR_SAMPLES = 4, TU_DW_TR_BINARIES = 8, TU_DW_TR_STAGES = 16, TU_DW_TR_ALL = 32,
++   TU_DW_TR_SUBMITS = 64,
+ };
+ static int
+ tu_dw_trace_flags(void)
+@@ -4138,7 +4140,8 @@ tu_dw_trace_flags(void)
+          flags = TU_DW_TR_PASSES | TU_DW_TR_DRAWS | TU_DW_TR_BINARIES;
+       for (; v && *v; v++)
+          flags |= *v == 'p' ? TU_DW_TR_PASSES : *v == 'd' ? TU_DW_TR_DRAWS : *v == 's' ? TU_DW_TR_SAMPLES | TU_DW_TR_DRAWS :
+-                  *v == 'b' ? TU_DW_TR_BINARIES : *v == 't' ? TU_DW_TR_STAGES : *v == 'a' ? TU_DW_TR_ALL : 0;
++                  *v == 'b' ? TU_DW_TR_BINARIES : *v == 't' ? TU_DW_TR_STAGES : *v == 'a' ? TU_DW_TR_ALL :
++                  *v == 'q' ? TU_DW_TR_SUBMITS : 0;
+       if (flags)
+          flags |= TU_DW_TR_PASSES;   /* draws and stages are joined to their pass */
+    }
+@@ -4163,7 +4166,7 @@ tu_dw_mode(void)
+ /* The trace file. Every record starts with u16 type, u16 0, u32 bytes (the whole record); little endian, packed. The file starts with
+  * "TUDWTRC1", u32 the always-on counter's frequency, u32 pid, u64 the CPU's monotonic clock in ns at open. scripts/gpu-trace.py in
+  * UniXNU-asteroids reads it; a change here goes with a change there. */
+-enum { TU_DW_REC_PASS = 1, TU_DW_REC_DRAW = 3, TU_DW_REC_SHADER = 4, TU_DW_REC_FRAG = 5, TU_DW_REC_NOTE = 6 };
++enum { TU_DW_REC_PASS = 1, TU_DW_REC_DRAW = 3, TU_DW_REC_SHADER = 4, TU_DW_REC_FRAG = 5, TU_DW_REC_NOTE = 6, TU_DW_REC_SUBMIT = 7 };
+ struct PACKED tu_dw_rec_head { uint16_t type, zero; uint32_t bytes; };
+ /* A timed pass, blit, copy, resolve or clear (kind: tu_dw_kind), at its command buffer's reset. Stage stamps are 0 unless flags & 2. */
+ struct PACKED tu_dw_trace_pass {
+@@ -4211,6 +4214,14 @@ struct PACKED tu_dw_trace_shader {
+    uint16_t instrs_per_cat[8];
+    uint32_t bin_bytes;
+ };
++/* A kernel submission (TU_DW_TRACE q): the CPU's CLOCK_UPTIME_RAW in ns (the Metal frontend's frames trace's clock) before and after
++ * the backend's submit, the queue's fence after it, then the serials of its command buffers in submission order (u32 each, 0 for one
++ * that recorded nothing traced), so the passes' GPU stamps tie to the CPU's time of their submission. */
++struct PACKED tu_dw_trace_submission {
++   struct tu_dw_rec_head head;
++   uint64_t before_ns, after_ns;
++   uint32_t fence, count;
++};
+ /* An autotune entry once the GPU has finished it: draws and samples passed for the whole pass. */
+ struct PACKED tu_dw_trace_frag {
+    struct tu_dw_rec_head head;
+@@ -4324,6 +4335,38 @@ tu_dw_serial(struct tu_cmd_buffer *cmd)
+    return cmd->dw_serial;
+ }
+ 
++uint64_t
++tu_dw_submit_clock(void)
++{
++   if (!(tu_dw_trace_flags() & TU_DW_TR_SUBMITS))
++      return 0;
++#ifdef __APPLE__
++   return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
++#else
++   return os_time_get_nano();
++#endif
++}
++
++void
++tu_dw_trace_submit(struct tu_cmd_buffer *const *cmds, uint32_t count, uint64_t before_ns, uint32_t fence)
++{
++   if (!before_ns)
++      return;
++   struct tu_dw_trace_submission r;
++   tu_dw_rec_init(&r, TU_DW_REC_SUBMIT);
++   r.before_ns = before_ns;
++   r.after_ns = tu_dw_submit_clock();
++   r.fence = fence;
++   r.count = MIN2(count, 256u);
++   uint32_t serials[256];
++   for (uint32_t i = 0; i < r.count; i++)
++      serials[i] = cmds[i]->dw_serial;
++   r.head.bytes += r.count * sizeof(uint32_t);
++   simple_mtx_lock(&tu_dw_trace_mtx);
++   tu_dw_trace_put(&r, sizeof(r), serials, r.count * sizeof(uint32_t));
++   simple_mtx_unlock(&tu_dw_trace_mtx);
++}
++
+ /* Shaders seen so far, by id; under tu_dw_trace_mtx. */
+ static uint64_t tu_dw_seen[4096];
+ static uint64_t
+diff --git a/src/freedreno/vulkan/tu_cmd_buffer.h b/src/freedreno/vulkan/tu_cmd_buffer.h
+index d81c937..15765ac 100644
+--- a/src/freedreno/vulkan/tu_cmd_buffer.h
++++ b/src/freedreno/vulkan/tu_cmd_buffer.h
+@@ -717,6 +717,9 @@ void tu_dw_frag_entry(uint64_t area_px, uint32_t draws, uint64_t samples, bool h
+  * by scripts/gpu-trace.py on the host instead of a new build. */
+ struct tu_dw_draw_pending;
+ uint32_t tu_dw_serial(struct tu_cmd_buffer *cmd);
++/* TU_DW_TRACE q: the clock before a kernel submission (0 when off), and its record once submitted. */
++uint64_t tu_dw_submit_clock(void);
++void tu_dw_trace_submit(struct tu_cmd_buffer *const *cmds, uint32_t count, uint64_t before_ns, uint32_t fence);
+ void tu_dw_draw_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs, bool indexed, uint32_t count);
+ void tu_dw_draw_end(struct tu_cmd_buffer *cmd, struct tu_cs *cs);
+ 
+diff --git a/src/freedreno/vulkan/tu_queue.cc b/src/freedreno/vulkan/tu_queue.cc
+index a199e20..60a9833 100644
+--- a/src/freedreno/vulkan/tu_queue.cc
++++ b/src/freedreno/vulkan/tu_queue.cc
+@@ -561,6 +561,8 @@ queue_submit(struct vk_queue *_queue, struct vk_queue_submit *vk_submit)
+    }
+ #endif
+ 
++   uint64_t dw_before;   /* assigned, not initialized: the gotos below jump past it */
++   dw_before = tu_dw_submit_clock();
+    result =
+       tu_queue_submit(queue, submit, vk_submit->waits, vk_submit->wait_count,
+                       vk_submit->signals, vk_submit->signal_count,
+@@ -570,6 +572,7 @@ queue_submit(struct vk_queue *_queue, struct vk_queue_submit *vk_submit)
+       pthread_mutex_unlock(&device->submit_mutex);
+       goto out;
+    }
++   tu_dw_trace_submit(cmd_buffers, cmdbuf_count, dw_before, (uint32_t) queue->fence);
+ 
+    tu_debug_bos_print_stats(device);
+ 
