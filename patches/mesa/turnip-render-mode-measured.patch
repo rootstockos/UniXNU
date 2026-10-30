@@ -1,5 +1,5 @@
 diff --git a/src/freedreno/vulkan/tu_autotune.cc b/src/freedreno/vulkan/tu_autotune.cc
-index ed89f75..54060c6 100644
+index ed89f75..efe746c 100644
 --- a/src/freedreno/vulkan/tu_autotune.cc
 +++ b/src/freedreno/vulkan/tu_autotune.cc
 @@ -100,7 +100,10 @@ enum class tu_autotune::algorithm : uint8_t {
@@ -14,19 +14,6 @@ index ed89f75..54060c6 100644
  };
  
  /* Modifier flags, these modify the behavior of the autotuner in a user-defined way. */
-@@ -1845,6 +1848,12 @@ tu_autotune::get_optimal_mode(struct tu_cmd_buffer *cmd_buffer, rp_ctx_t *rp_ctx
-       return *early_return_mode;
-    }
- 
-+   /* A pass of fewer than 100 draws renders in SYSMEM without being profiled. On asteroids' A810 every such pass was faster there
-+    * (T71: median 89 us against 3.8 ms in GMEM under 25 draws, 448 us against 2.2 ms for 25-99), and profiling each new pass in GMEM
-+    * first cost 2.9 s of GPU time in 65 s. */
-+   if (can_early_return && config.is_enabled(algorithm::PROFILED) && rp_state->drawcall_count < 100)
-+      return render_mode::SYSMEM;
-+
-    rp_key key(0);
-    if (key_opt)
-       key = *key_opt;
 diff --git a/src/freedreno/vulkan/tu_cmd_buffer.cc b/src/freedreno/vulkan/tu_cmd_buffer.cc
 index 143f748..7b8a632 100644
 --- a/src/freedreno/vulkan/tu_cmd_buffer.cc
