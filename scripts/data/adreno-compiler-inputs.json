@@ -59,7 +59,8 @@
     "patches/mesa/turnip-asteroids-timing.patch",
     "patches/mesa/turnip-a810-sysmem-ccu.patch",
     "patches/mesa/turnip-render-mode-measured.patch",
-    "patches/mesa/turnip-asteroids-submit-trace.patch"
+    "patches/mesa/turnip-asteroids-submit-trace.patch",
+    "patches/mesa/turnip-narrow-linear-rows.patch"
   ],
   "integer_fma_reference": {
     "repository": "https://github.com/ucb-bar/berkeley-softfloat-3",
