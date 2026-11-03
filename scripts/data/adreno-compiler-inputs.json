@@ -62,7 +62,8 @@
     "patches/mesa/turnip-gmem-swap-trace.patch",
     "patches/mesa/turnip-thread-render-mode.patch",
     "patches/mesa/turnip-gmem-memory-side-swap.patch",
-    "patches/mesa/turnip-a810-sysmem-ccu.patch"
+    "patches/mesa/turnip-a810-sysmem-ccu.patch",
+    "patches/mesa/turnip-darwin-first-alloc-failure.patch"
   ],
   "integer_fma_reference": {
     "repository": "https://github.com/ucb-bar/berkeley-softfloat-3",
