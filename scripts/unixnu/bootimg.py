@@ -1,13 +1,13 @@
 """Android boot image: gzip(BootShim + UEFI FD) with the device tree appended, plus an optional ramdisk.
 
+Inputs are a Mu-Silicium checkout (BootShim sources, Resources/Configs/<device>.toml, mkbootimg.py),
+the built firmware volume and a compiled device tree. The image is meant for "fastboot boot" only.
+The result is verified by unpacking it again; the output is deterministic.
+
 With board.toml [bootimg] payload_in_kernel = true the payload goes into the kernel image instead: bootloaders
 that load the ramdisk from init_boot (devices launched with Android 13 or later) drop a boot image ramdisk, but
 always load the whole kernel. The volume follows the firmware at a page boundary behind a PAYLOAD_MAGIC header,
 and the ARM64 header's image size covers it so the bootloader keeps that memory free.
-
-Inputs are a Mu-Silicium checkout (BootShim sources, Resources/Configs/<device>.toml, mkbootimg.py),
-the built firmware volume and a compiled device tree. The image is meant for "fastboot boot" only.
-The result is verified by unpacking it again; the output is deterministic.
 """
 import gzip
 import hashlib
@@ -24,8 +24,8 @@ from .util import Error, log, run, sha256_file, tool
 DEFAULTS = {'header_version': 0, 'base': 0, 'kernel_offset': 0x8000, 'tags_offset': 0x1e00000, 'pagesize': 4096}
 PAYLOAD_MAGIC = b'UNIXNU PAYLOAD\0\0'
 PAYLOAD_HEADER = 4096
-MKBOOTIMG_FLAGS = ('base', 'kernel_offset', 'tags_offset', 'pagesize', 'header_version', 'ramdisk_offset', 'second_offset', 'cmdline',
-                   'os_version', 'os_patch_level')
+MKBOOTIMG_FLAGS = ('base', 'kernel_offset', 'tags_offset', 'pagesize', 'header_version', 'os_version',
+                   'os_patch_level', 'ramdisk_offset', 'second_offset', 'cmdline')
 
 
 def compile_shim(uefi, base, size, requires_header, scratch):
@@ -45,17 +45,6 @@ def compile_shim(uefi, base, size, requires_header, scratch):
     if requires_header and (shim[56:60] != b'ARM\x64' or struct.unpack_from('<QQ', shim, 8) != (base, len(shim) + size)):
         raise Error('the ARM64 image header does not describe the shim plus the firmware volume')
     return shim
-
-
-def append_payload(combined, volume):
-    """Carry the payload volume in the kernel image (see the module docstring)."""
-    if len(volume) % 512:
-        raise Error('the payload volume is not a whole number of 512-byte sectors')
-    start = -(-len(combined) // PAYLOAD_HEADER) * PAYLOAD_HEADER
-    header = struct.pack('<16sIIQI', PAYLOAD_MAGIC, 1, PAYLOAD_HEADER, len(volume), zlib.crc32(volume))
-    image = bytearray(combined.ljust(start, b'\0') + header.ljust(PAYLOAD_HEADER, b'\0') + volume)
-    struct.pack_into('<Q', image, 16, -(-len(image) // PAYLOAD_HEADER) * PAYLOAD_HEADER)
-    return bytes(image)
 
 
 def patch_dtb(dtb, nodes, scratch):
@@ -85,6 +74,17 @@ def settings(ctx, uefi):
     values.update(ctx.board.get('bootimg', {}).get('image', {}))
     fd = config.get('uefi_fd', {})
     return values, fd.get('base'), fd.get('size'), config.get('boot_shim', {}).get('requires_kernel_header', True), config
+
+
+def append_payload(combined, volume):
+    """Carry the payload volume in the kernel image (see the module docstring)."""
+    if len(volume) % 512:
+        raise Error('the payload volume is not a whole number of 512-byte sectors')
+    start = -(-len(combined) // PAYLOAD_HEADER) * PAYLOAD_HEADER
+    header = struct.pack('<16sIIQI', PAYLOAD_MAGIC, 1, PAYLOAD_HEADER, len(volume), zlib.crc32(volume))
+    image = bytearray(combined.ljust(start, b'\0') + header.ljust(PAYLOAD_HEADER, b'\0') + volume)
+    struct.pack_into('<Q', image, 16, -(-len(image) // PAYLOAD_HEADER) * PAYLOAD_HEADER)
+    return bytes(image)
 
 
 def build(ctx, uefi, fd, dtb, ramdisk=None, output=None):
@@ -119,8 +119,15 @@ def build(ctx, uefi, fd, dtb, ramdisk=None, output=None):
             combined = append_payload(combined, Path(ramdisk).read_bytes())
             log(f'bootimg: payload in the kernel image at {len(shim) + len(firmware):#x}+, no ramdisk')
             ramdisk = None
-        kernel = gzip.compress(combined, mtime=0) + tree
-        kernel_path = scratch / 'Image.gz-dtb'
+        # [bootimg.image] kernel_compression selects the kernel encoding. The
+        # default keeps the gzip convention; "none" writes the uncompressed
+        # BootShim and firmware blob, which is useful when a vendor ABL is
+        # suspected of mishandling the compressed stream.
+        compression = str(image.get('kernel_compression', 'gzip')).lower()
+        if compression not in ('gzip', 'none'):
+            raise Error(f'unsupported kernel_compression: {compression}')
+        kernel = (gzip.compress(combined, mtime=0) if compression == 'gzip' else combined) + tree
+        kernel_path = scratch / (('Image.gz-dtb' if compression == 'gzip' else 'Image-dtb'))
         kernel_path.write_bytes(kernel)
         if ramdisk:
             ramdisk_path = Path(ramdisk)
@@ -134,7 +141,7 @@ def build(ctx, uefi, fd, dtb, ramdisk=None, output=None):
             if key in image:
                 command += [f'--{key}', str(image[key])]
         run(command, capture=True)
-        report = verify(out, combined, tree, ramdisk_path, image)
+        report = verify(out, combined, tree, ramdisk_path, image, compression)
     report.update(payload_in_kernel=in_kernel, kernel_bytes=len(combined), image_sha256=sha256_file(out), image_bytes=out.stat().st_size, fd_sha256=sha256_file(fd),
                   dtb_sha256=sha256_file(dtb), shim_bytes=len(shim), hardware_tested=False)
     (out.parent / 'boot.json').write_text(json.dumps(report, indent=2) + '\n')
@@ -142,30 +149,39 @@ def build(ctx, uefi, fd, dtb, ramdisk=None, output=None):
     return out
 
 
-def verify(path, combined, tree, ramdisk_path, image):
+def verify(path, combined, tree, ramdisk_path, image, compression='gzip'):
     """Unpack the image and compare every part with its input."""
     data = Path(path).read_bytes()
-    version = struct.unpack_from('<I', data, 40)[0]  # header_version is at offset 40 in every layout
-    if data[:8] != b'ANDROID!' or version != image['header_version']:
+    if data[:8] != b'ANDROID!':
+        raise Error('boot image magic missing')
+    # header_version sits at offset 40 in both the v0 and the v3/v4 layouts.
+    version = struct.unpack_from('<I', data, 40)[0]
+    if version != image['header_version']:
         raise Error('boot image header does not match the requested parameters')
+    page = image['pagesize']
     if version >= 3:
-        # v3/v4: kernel and ramdisk sizes only; the page is fixed at 4096 and load addresses live in vendor_boot.
-        kernel_size, ramdisk_size = struct.unpack_from('<2I', data, 8)
-        page, kernel_address, tags = 4096, None, None
+        # v3/v4 drop the load addresses and the second stage: the kernel follows a
+        # header_size-padded header and the ramdisk follows the kernel.
+        kernel_size, ramdisk_size, _os_version, header_size = struct.unpack_from('<4I', data, 8)
+        kernel_address = tags = 0
+        start = page * max(1, -(-header_size // page))
+        ramdisk_start = start + page * (-(-kernel_size // page))
     else:
-        kernel_size, kernel_address, ramdisk_size, _, second_size, _, tags, page, _, _ = struct.unpack_from('<10I', data, 8)
-        if second_size or page != image['pagesize']:
+        kernel_size, kernel_address, ramdisk_size, _, second_size, _, tags, header_page, _, _ = struct.unpack_from('<10I', data, 8)
+        if second_size or header_page != page:
             raise Error('boot image header does not match the requested parameters')
         if kernel_address != image['base'] + image['kernel_offset'] or tags != image['base'] + image['tags_offset']:
             raise Error('boot image load addresses do not match the requested offsets')
-    kernel = data[page:page + kernel_size]
-    unpacker = zlib.decompressobj(16 + zlib.MAX_WBITS)
-    if unpacker.decompress(kernel) != combined or not unpacker.eof or unpacker.unused_data != tree:
-        raise Error('gzip, firmware and appended device tree do not round-trip')
-    start = page * (1 + -(-kernel_size // page))
-    if data[start:start + ramdisk_size] != Path(ramdisk_path).read_bytes():
+        start = 0
+        ramdisk_start = page * (1 + -(-kernel_size // page))
+    kernel = data[start:start + kernel_size]
+    if compression == 'gzip':
+        unpacker = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        if unpacker.decompress(kernel) != combined or not unpacker.eof or unpacker.unused_data != tree:
+            raise Error('gzip, firmware and appended device tree do not round-trip')
+    elif kernel != combined + tree:
+        raise Error('firmware and appended device tree do not round-trip')
+    if data[ramdisk_start:ramdisk_start + ramdisk_size] != Path(ramdisk_path).read_bytes():
         raise Error('ramdisk bytes differ')
     return {'kernel_sha256': hashlib.sha256(kernel).hexdigest(), 'ramdisk_bytes': ramdisk_size,
-            'header_version': version,
-            'kernel_address': hex(kernel_address) if kernel_address is not None else None,
-            'tags_address': hex(tags) if tags is not None else None}
+            'header_version': version, 'kernel_address': hex(kernel_address), 'tags_address': hex(tags)}

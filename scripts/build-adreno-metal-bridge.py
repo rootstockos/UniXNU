@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = json.loads((ROOT / 'scripts/data/gpu-metal-vulkan-inputs.json').read_text())['translator']['commit']
@@ -44,19 +44,38 @@ PATCHES = [ROOT / 'drivers/AdrenoMetal/bridge/patches' / name for name in [
     '0014-in-place-written-textures.patch', '0015-in-place-written-host-page-textures.patch',
     # Device::refuse_rebinds: no call logs or per-command holds of no-copy buffers, which only a rebind or a detach reads.
     '0016-refuse-rebinds.patch',
-    # A read-only source of shader-cache entries behind the directory (the pipelines compiled ahead on the host, read on demand from the
-    # userdata import region): an entry the directory lacks is asked of it, and nothing is copied into the directory.
-    '0017-shader-cache-fallback-source.patch',
     # A heap texture's own-device answer rounded up to a multiple of its alignment, as Metal's answers are: a heap sized as the sum of
     # its textures' answers then holds them (iconservicesagent's Core Image heaps ran out: OutOfMemory(Heap)).
-    '0018-heap-texture-size-a-multiple-of-its-alignment.patch',
+    '0017-heap-texture-size-a-multiple-of-its-alignment.patch',
     # The runtime's live device memory in bytes by kind (pooled, placed, empty kept, dedicated, imported), for the frontend's MEM row.
-    '0019-memory-census-bytes.patch',
+    '0018-memory-census-bytes.patch',
     # The call stacks that allocated device memory of 4 MiB or more, by bytes, for the frontend's MA rows.
-    '0020-allocation-sites.patch',
-    # A written texture over host pages stays in place at any size: Turnip renders a linear host image of partial tile blocks without
-    # tile memory (patches/mesa/turnip-render-mode-for-attachment-memory.patch); its shadow merged every pass back through 94 MB.
-    '0021-written-host-page-textures-in-place-at-any-size.patch']]
+    '0019-allocation-sites.patch',
+    # A written texture over host pages stays in place at any size: Turnip loads and stores a linear host image of partial tile blocks
+    # over its texels alone (patches/mesa/turnip-render-mode-for-attachment-memory.patch); its shadow merged every pass back through 94 MB.
+    '0020-written-host-page-textures-in-place-at-any-size.patch',
+    # A dedicated block of images whose image went stays spare for the next one of its pool (Core Animation's memoryless attachments,
+    # backed at their first pass, were each a new 40-112 MiB allocation), freed after 10 s, when a block cannot be made, or under memory
+    # pressure; room in the pools is kept by a thread of the device's, not in the creation call that asked for it.
+    '0021-spare-image-blocks-and-room-keeper.patch',
+    # stage_trace.rs: each command buffer's stages from its commit to its completion (commit, lowering, recording, the scheduler's
+    # holds, each submission, the completion waiter) and the scheduler's sleeps and wakes, read by the frontend (nmb_stage_ring_read).
+    '0022-command-buffer-stage-trace.patch',
+    # The threads that bring command buffers to their handlers run at the user-interactive class and the compile threads at least at
+    # the user-initiated class on iOS too, not on macOS alone: on the iPad they ran at the default class and woke up to 50 ms late.
+    '0023-quality-of-service-on-ios.patch',
+    # The host's diagnostics switch (SHENG_DIAG, from the boot argument sheng-diag=1): without it the stage ring and the allocation sites
+    # keep nothing. The stage ring also marks the steps inside a batch's submission (SubmitStep: placed, gathered, vkQueueSubmit, changes).
+    '0024-diagnostics-switch-and-submit-steps.patch',
+    # Preserve specialized link names and source definitions; share large indexed constants and expose Vulkan allocation sizes.
+    '0025-specialized-links-shared-constants-and-allocation-size.patch',
+    '0026-frame-diagnostic-links.patch',
+    '0027-bounded-image-reuse-and-retired-release.patch',
+    '0028-guard-memory-release-test-worker.patch',
+    '0029-latency-stage-selection.patch',
+    # Spare image blocks have no byte limit (they age, go when a block cannot be made and on memory pressure), and the room keeper takes
+    # a spare block before it makes a new one: the limit freed spares the render server made again within seconds, each a fresh wiring.
+    '0030-spare-image-blocks-give-room.patch']]
 
 
 def git_tree(*steps):
@@ -85,13 +104,24 @@ out.mkdir(parents=True, exist_ok=True)
 llvm_as = next((p for p in ['/opt/homebrew/opt/llvm/bin/llvm-as', shutil.which('llvm-as') or ''] if p and Path(p).exists()), None)
 if not llvm_as:
     raise SystemExit('llvm-as (LLVM 21 or newer) is required to assemble the fixture')
+def assemble_fixture(source, target):
+    # Preserve an unchanged include_bytes input so a frontend relink keeps its Rust archive.
+    with tempfile.NamedTemporaryFile(dir=target.parent, suffix='.air', delete=False) as stream:
+        temporary = Path(stream.name)
+    try:
+        subprocess.run([llvm_as, '-o', temporary, source], check=True)
+        if not target.is_file() or temporary.read_bytes() != target.read_bytes():
+            os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
 air = out / 'runtime_examples.air'
-subprocess.run([llvm_as, '-o', air, SOURCE / 'crates/metal2vulkan-validation/fixtures/public/examples/runtime_examples.ll'], check=True)
+assemble_fixture(SOURCE / 'crates/metal2vulkan-validation/fixtures/public/examples/runtime_examples.ll', air)
 fc_air = out / 'function_constant.air'
-subprocess.run([llvm_as, '-o', fc_air, SOURCE / 'crates/metal2vulkan-validation/fixtures/public/kernel_function_constant_gate_fold.ll'], check=True)
+assemble_fixture(SOURCE / 'crates/metal2vulkan-validation/fixtures/public/kernel_function_constant_gate_fold.ll', fc_air)
 # The GPU scanout's half-float conversion kernel (GpuScanoutPresenter.h), hand-written AIR.
 scanout_air = out / 'scanout_convert.air'
-subprocess.run([llvm_as, '-o', scanout_air, ROOT / 'drivers/AdrenoMetal/shaders/scanout_convert.ll'], check=True)
+assemble_fixture(ROOT / 'drivers/AdrenoMetal/shaders/scanout_convert.ll', scanout_air)
 manifest = out / 'Cargo.toml'
 manifest.write_text('\n'.join([
     '[package]', 'name = "adreno-metal-bridge"', 'version = "0.1.0"', 'edition = "2024"', 'rust-version = "1.98"', '[workspace]',
@@ -121,17 +151,11 @@ if args.target == 'ios27':
     env['RUSTC_BOOTSTRAP'] = '1'
 target_dir = ROOT / 'build/m2v-target'
 log = out / ('build-%s.log' % args.target)
-# cargo's output goes to the console as it runs (CI logs show progress) and to the log file.
-with log.open('w') as stream, subprocess.Popen(cargo + ['build', '--release', '--manifest-path', manifest, '--target', triple,
-                                                        '--target-dir', target_dir], env=env, stdout=subprocess.PIPE,
-                                               stderr=subprocess.STDOUT, text=True, errors='replace') as build:
-    for line in build.stdout:
-        sys.stdout.write(line)
-        sys.stdout.flush()
-        stream.write(line)
-    returncode = build.wait(timeout=1800)
-if returncode:
-    raise SystemExit(f'cargo failed ({returncode}); full output above and in {log}')
+with log.open('w') as stream:
+    result = subprocess.run(cargo + ['build', '--release', '--manifest-path', manifest, '--target', triple,
+                             '--target-dir', target_dir], env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=1800)
+if result.returncode:
+    raise SystemExit(log.read_text()[-6000:])
 library = target_dir / triple / 'release/libadreno_metal_bridge.a'
 final = out / args.target / 'libadreno_metal_bridge.a'
 final.parent.mkdir(exist_ok=True)
