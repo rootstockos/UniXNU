@@ -15,6 +15,7 @@ import platform
 import plistlib
 import struct
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -183,7 +184,7 @@ def decrypt_aea(path):
     """Decrypt an AEA archive beside it (name without .aea), cached with the sha256 of both files.
 
     The key is fetched by `ipsw fw aea --key` from the key URL in the archive header and passed to macOS aea;
-    it is not written to disk or the log.
+    it is not written to disk or the log. Other hosts let `ipsw fw aea -o` fetch the key and decrypt.
     """
     out = path.with_suffix('')
     record = out.with_suffix(out.suffix + '.json')
@@ -193,22 +194,30 @@ def decrypt_aea(path):
                 and data.get('size') == out.stat().st_size:
             return out
     if platform.system() != 'Darwin':
-        raise Error(f'{path.name} is AEA encrypted; decrypting it needs macOS /usr/bin/aea')
-    tool('aea', 'macOS /usr/bin/aea decrypts AEA disk images')
-    ipsw = tool('ipsw', 'the ipsw tool fetches the AEA key (brew install blacktop/tap/ipsw)')
-    log(f'ipsw: fetching the AEA key of {path.name}')
-    result = subprocess.run([ipsw, 'fw', 'aea', '--key', str(path)], capture_output=True, text=True)
-    keys = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith('base64:')]
-    if result.returncode or len(keys) != 1:
-        raise Error(f'could not fetch the AEA key of {path.name}: {result.stderr.strip()[-300:]}')
-    partial = out.with_suffix(out.suffix + '.partial')
-    log(f'ipsw: decrypting {path.name}')
-    result = subprocess.run(['/usr/bin/aea', 'decrypt', '-i', str(path), '-o', str(partial), '-key-value', keys[0]],
-                            capture_output=True, text=True)
-    if result.returncode:
-        partial.unlink(missing_ok=True)
-        raise Error(f'aea decrypt of {path.name} failed: {result.stderr.strip()[-300:]}')
-    partial.rename(out)
+        ipsw = tool('ipsw', 'the ipsw tool decrypts AEA disk images on this host (github.com/blacktop/ipsw)')
+        log(f'ipsw: decrypting {path.name} with ipsw')
+        with tempfile.TemporaryDirectory(dir=path.parent, prefix='.aea-') as directory:
+            result = subprocess.run([ipsw, 'fw', 'aea', '-o', directory, str(path)], capture_output=True, text=True)
+            produced = [entry for entry in Path(directory).rglob('*') if entry.is_file()]
+            if result.returncode or len(produced) != 1:
+                raise Error(f'ipsw could not decrypt {path.name}: {result.stderr.strip()[-300:]}')
+            produced[0].rename(out)
+    else:
+        tool('aea', 'macOS /usr/bin/aea decrypts AEA disk images')
+        ipsw = tool('ipsw', 'the ipsw tool fetches the AEA key (brew install blacktop/tap/ipsw)')
+        log(f'ipsw: fetching the AEA key of {path.name}')
+        result = subprocess.run([ipsw, 'fw', 'aea', '--key', str(path)], capture_output=True, text=True)
+        keys = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith('base64:')]
+        if result.returncode or len(keys) != 1:
+            raise Error(f'could not fetch the AEA key of {path.name}: {result.stderr.strip()[-300:]}')
+        partial = out.with_suffix(out.suffix + '.partial')
+        log(f'ipsw: decrypting {path.name}')
+        result = subprocess.run(['/usr/bin/aea', 'decrypt', '-i', str(path), '-o', str(partial), '-key-value', keys[0]],
+                                capture_output=True, text=True)
+        if result.returncode:
+            partial.unlink(missing_ok=True)
+            raise Error(f'aea decrypt of {path.name} failed: {result.stderr.strip()[-300:]}')
+        partial.rename(out)
     source = json.loads(path.with_suffix(path.suffix + '.json').read_text())
     record.write_text(json.dumps({'member': source.get('member'), 'aea_sha256': source.get('sha256'),
                                   'size': out.stat().st_size, 'sha256': sha256_file(out)}, indent=2) + '\n')
