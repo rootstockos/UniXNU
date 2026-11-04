@@ -67,6 +67,10 @@ def version_env(modules, ctx=None):
         env['UNIXNU_IPSW_BUILD'] = ctx.board.get('ipsw', {}).get('build', '')
         # The IPSW's device class (j820ap, d48ap): the recorded original-class ABI of an OS build may differ per device's kernelcache.
         env['UNIXNU_IPSW_DEVICE_CLASS'] = ctx.board.get('ipsw', {}).get('device_class', '')
+        # The device package's folder in the tree (kits/<kit>), where board sources are looked up.
+        env['UNIXNU_BOARD_KIT'] = ctx.board.get('board', {}).get('kit', ctx.name)
+        # The selected OS profile (profiles/os/<name>), for builders that read its source pins.
+        env['UNIXNU_OS_PROFILE'] = ctx.board.get('board', {}).get('os_profile', '')
         env['UNIXNU_XNU_ARCH'] = load_toml(ctx.profile_roots['arch'] / 'profile.toml').get('arch', {}).get('name', 'arm64')
     return env
 
