@@ -1,0 +1,20 @@
+{
+  "kernelcache_sha256": "fa07057bf34f33af1ec26681ad0c87c13e5aaa548a300740eddb0e92876e5f95",
+  "collection_slide": "0x0",
+  "metaclass": "0xfffffff00b952818",
+  "instance_bytes": 136,
+  "virtual_entries": 168,
+  "operational_overrides": [],
+  "metadata_overrides": [
+    0,
+    1,
+    7
+  ],
+  "protected_compatible_constructor_aliases": [
+    "0xfffffff00a04e610",
+    "0xfffffff00a04e648"
+  ],
+  "nondeleting_destructor": "0xfffffff00a04e680",
+  "get_meta_class": "0xfffffff00a04e6f0",
+  "evidence": "IOGPUFamily static initializer at 0xfffffff00a04e700 constructs IOAcceleratorES::gMetaClass with size 0x88. vtable 0xfffffff008298490 (+0x10 address point) has 168 IOService entries; only slots 0, 1 (destructors 0xfffffff00a04e688, 0xfffffff00a04e690) and 7 (getMetaClass) differ from IOService's. Both constructors call IOService::IOService(const OSMetaClass *) and store the signed vtable (DA, 0xcda1); the nondeleting destructor tail-calls IOService::~IOService. Remapped for iPhone17,4 24A446 (kernelcache fa07057bf34f33af...) by UniXNU-asteroids scripts/kcremap_24A446.py: addresses moved by fileset entry, segment and offset, code verified by masked instructions, the 168 vtable slots by equal PAC fields and targets."
+}

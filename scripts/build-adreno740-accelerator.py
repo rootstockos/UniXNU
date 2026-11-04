@@ -4,6 +4,7 @@ IOAcceleratorES imports, as a "late" archive: its static initializer is removed 
 probe runs it after the original IOGPUFamily kext has loaded. Same binding recipe as build-native-accelerator-abi.py (exact
 original constructor, destructor and metaclass addresses from build/gpu-analysis/ioaccelerator-base-abi.json)."""
 import hashlib
+import os
 import json
 from pathlib import Path
 import struct
@@ -36,10 +37,16 @@ def sha(path):
 
 # iPadOS 27 (arm64e fileset): the reviewed 24A446 plan, original addresses before the collection slide.
 FILESET = ARCH == 'arm64e' and IOS_VERSION.split('.')[0] == '27'
-plan_path = ROOT / ('build/gpu-analysis/ioaccelerator-base-abi-24A446.json' if FILESET else 'build/gpu-analysis/ioaccelerator-base-abi.json')
+# Another device's kernelcache of the same build has its own addresses: a plan recorded for the IPSW's device class
+# (ioaccelerator-base-abi-24A446-d48ap.json for iPhone17,4) is used where one exists.
+DEVICE_CLASS = os.environ.get('UNIXNU_IPSW_DEVICE_CLASS', '')
+STEM = 'ioaccelerator-base-abi-24A446' if FILESET else 'ioaccelerator-base-abi'
+if FILESET and DEVICE_CLASS and (ROOT / f'scripts/data/{STEM}-{DEVICE_CLASS}.json').exists():
+    STEM += '-' + DEVICE_CLASS
+plan_path = ROOT / f'build/gpu-analysis/{STEM}.json'
 # The audit of the original base class needs the hardware-observed parent evidence of the audited kernel; its recorded result
 # ships with the scripts and seeds a fresh tree.
-recorded = ROOT / ('scripts/data/ioaccelerator-base-abi-24A446.json' if FILESET else 'scripts/data/ioaccelerator-base-abi.json')
+recorded = ROOT / f'scripts/data/{STEM}.json'
 if not plan_path.exists() and recorded.exists():
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_bytes(recorded.read_bytes())

@@ -65,6 +65,8 @@ def version_env(modules, ctx=None):
         if root.get('systemos_volume_uuid'):
             env['UNIXNU_ROOT_SYSTEMOS_UUID'] = root['systemos_volume_uuid']
         env['UNIXNU_IPSW_BUILD'] = ctx.board.get('ipsw', {}).get('build', '')
+        # The IPSW's device class (j820ap, d48ap): the recorded original-class ABI of an OS build may differ per device's kernelcache.
+        env['UNIXNU_IPSW_DEVICE_CLASS'] = ctx.board.get('ipsw', {}).get('device_class', '')
         env['UNIXNU_XNU_ARCH'] = load_toml(ctx.profile_roots['arch'] / 'profile.toml').get('arch', {}).get('name', 'arm64')
     return env
 
