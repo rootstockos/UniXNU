@@ -1230,6 +1230,11 @@
     "title_zh": "Xiaomi Mi 10 / SM8250 UniXNU bring-up (neowiseq)"
   },
   {
+    "name": "unicorn",
+    "title": "Xiaomi 12S Pro (unicorn, SM8475): UniXNU UEFI bring-up",
+    "title_zh": "Xiaomi 12S Pro (unicorn, SM8475): UniXNU UEFI bring-up"
+  },
+  {
     "name": "unisoc",
     "title": "Unisoc devices",
     "title_zh": "Unisoc 设备"

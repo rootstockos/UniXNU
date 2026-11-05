@@ -43,7 +43,7 @@
 | [DroidVM 客户机（Gunyah 上的 crosvm）](/zh/devices/droidvm) | crosvm-gunyah | 1 | 设备说明 | [Droid-VM/UniXNU-droidvm](https://github.com/Droid-VM/UniXNU-droidvm) |
 | [DroidVM guest \(crosvm on Gunyah\) \(lateautumn233\)](/zh/devices/droidvm-lateautumn233) | crosvm-gunyah | 1 | 仓库链接 | [lateautumn233/UniXNU-droidvm](https://github.com/lateautumn233/UniXNU-droidvm) |
 | [DroidVM guest \(crosvm on Gunyah\) \(Neko17awa\)](/zh/devices/droidvm-neko17awa) | crosvm-gunyah | 1 | 仓库链接 | [Neko17awa/UniXNU-droidvm](https://github.com/Neko17awa/UniXNU-droidvm) |
-| [Rongyue E5（e5）](/zh/devices/e5) | UMS9621 | 2 | 适配记录 | [Enceka/UniXNU-e5](https://github.com/Enceka/UniXNU-e5) |
+| [Rongyue E5（e5）](/zh/devices/e5) | UMS9621 | 2 | 记录待补齐 | [Enceka/UniXNU-e5](https://github.com/Enceka/UniXNU-e5) |
 | [联想拯救者 Y700 四代（elden）](/zh/devices/elden) | SM8750P | 2 | 适配记录 | [jerry-2009/UNIXNU_elden](https://github.com/jerry-2009/UNIXNU_elden) |
 | [小米平板 5 Pro Wi-Fi（elish）](/zh/devices/elish) | SM8250-AC | 1 | 设备说明 | [hpadmx/UniXNU-elish](https://github.com/hpadmx/UniXNU-elish) |
 | [一加 6（enchilada）](/zh/devices/enchilada) | SDM845 | 1 | 设备说明 | [keyfan/UniXNU-enchilada](https://github.com/keyfan/UniXNU-enchilada) |
@@ -230,7 +230,7 @@
 | [REDMI K100 Pro Max \(songyuan, SM8850 Canoe\)](/zh/devices/songyuan) | SM8850 | 1 | 仓库链接 | [WUKAWL/songyuan-unixnu](https://github.com/WUKAWL/songyuan-unixnu) |
 | [Redmi K90 Pro Max \(songyuan\) \(aogg2023\)](/zh/devices/songyuan-aogg2023) | SM8850 | 1 | 仓库链接 | [aogg2023/songyuan-device](https://github.com/aogg2023/songyuan-device) |
 | [Redmi K90 Pro Max \(songyuan\) \(WUKAWL\)](/zh/devices/songyuan-wukawl) | SM8850 | 1 | 仓库链接 | [WUKAWL/songyuan-device](https://github.com/WUKAWL/songyuan-device) |
-| [Samsung Galaxy S9 \(starlte, SM-G960F, Exynos 9810\): HakiOS, iOS 16.5 on XNU; not built on the UniXNU tree](/zh/devices/starlte) | Exynos 9810 | 2 | 适配记录 | [Scion-Project/hakios-starlte](https://github.com/Scion-Project/hakios-starlte) |
+| [Samsung Galaxy S9 \(starlte, SM-G960F, Exynos 9810\): HakiOS, iOS 16.5 on XNU; not built on the UniXNU tree](/zh/devices/starlte) | Exynos 9810 | 2 | 适配记录 | [Scion-Project/scion-starlte](https://github.com/Scion-Project/scion-starlte) |
 | [Redmi Note 10 Pro（sweet）](/zh/devices/sweet) | SM7150 | 1 | 设备说明 | [CrackerCat/UniXNU-sweet](https://github.com/CrackerCat/UniXNU-sweet) |
 | [Xiaomi Redmi Note 10 Pro \(zeroninevibedslop\)](/zh/devices/sweet-zeroninevibedslop) | SM7150 | 2 | 记录待补齐 | [zeroninevibedslop/UniXNU-sweet](https://github.com/zeroninevibedslop/UniXNU-sweet) |
 | [Unisoc UMS512 / T610YP](/zh/devices/t610yp) | unisoc-ums512-sharkl5pro-t610yp | 1 | 设备说明 | [hxzbaka/UniXNU-t610yp](https://github.com/hxzbaka/UniXNU-t610yp) |
@@ -252,6 +252,7 @@
 | [Xiaomi Mi 10 standalone UniXNU bring-up \(JopangJovan\)](/zh/devices/umi-jopangjovan) | SM8250 | 2 | 适配记录 | [JopangJovan/UniXNU-umi](https://github.com/JopangJovan/UniXNU-umi) |
 | [Xiaomi Mi 10 / SM8250 UniXNU bring-up \(mouya-q\)](/zh/devices/umi-mouya-q) | SM8250 | 1 | 仓库链接 | [mouya-q/UniXNU-umi](https://github.com/mouya-q/UniXNU-umi) |
 | [Xiaomi Mi 10 / SM8250 UniXNU bring-up \(neowiseq\)](/zh/devices/umi-neowiseq) | SM8250 | 1 | 仓库链接 | [neowiseq/UniXNU-umi](https://github.com/neowiseq/UniXNU-umi) |
+| [Xiaomi 12S Pro \(unicorn, SM8475\): UniXNU UEFI bring-up](/zh/devices/unicorn) | SM8475 | 2 | 适配记录 | [zhouzhoublm/UniXNU-unicorn](https://github.com/zhouzhoublm/UniXNU-unicorn) |
 | [Unisoc 设备](/zh/devices/unisoc) | Unisoc | 1 | 设备说明 | [hxzbaka/UniXNU-Unisoc](https://github.com/hxzbaka/UniXNU-Unisoc) |
 | [unixnu-build](/zh/devices/unixnu-build) | build tree | 1 | 设备说明 | [iskssksjjsjjzjs/unixnu-build](https://github.com/iskssksjjsjjzjs/unixnu-build) |
 | [Xiaomi Mi 11 M2011K2C: single-CPU platform bring-up](/zh/devices/venus) | SM8350 | 2 | 适配记录 | [Sulee7z/UniXNU-venus](https://github.com/Sulee7z/UniXNU-venus) |
