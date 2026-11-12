@@ -59,6 +59,10 @@
 
 
 ["adt"."chosen"."u32"]
+# As the iPadOS 27 profile (6352f5c): a Mac reads these two and chip-id over lockdown and looks them up in MobileDevice's device
+# map. iPhone17,4 is d48ap, board 0x0a; the chip-id is the board's [payload.adt] chip_id (8140).
+"board-id" = 10
+"security-domain" = 1
 "certificate-production-status" = 0
 "effective-production-status-ap" = 0
 "certificate-security-mode" = 1
