@@ -19,11 +19,21 @@ AdrenoMetal publishes a Metal device through `MTLAddDevice`. It translates AIR t
 A render pass that fails encoding returns an encoder and reports a command-buffer error. This supports callers that cache encoder methods.
 
 
-Unused owned image backing is reused by pooled and dedicated images. Extra spares share a 256 MiB budget per device and expire after ten seconds. Plain backing of at least 256 KiB is retired on the existing room worker, with a 128 MiB queue limit. An allocation failure releases queued backing before retrying. Imported memory and owner callbacks keep their release ordering. First-use allocations can still prepare new pages.
+Unused owned image backing is reused by pooled and dedicated images. Extra spares have no byte limit, expire after ten seconds, and go sooner under memory pressure or when a new block cannot be made. Blocks are freed off the releasing thread on the runtime's free thread, and on the releasing thread once its queue is full. An allocation failure releases kept spares and waits for posted frees before retrying. Imported memory and owner callbacks keep their release ordering. First-use allocations can still prepare new pages.
 
 ## Cache and priority
 
 Clients with the same UID use `Library/Caches/org.unixnu.metal` under their account home when writable. Sandbox restrictions select a private cache. `NATIVE_METAL_SHARED_CACHE_DIR` selects another shared root; an empty value disables sharing. The cache covers Apple frontend output, runtime artifacts and Turnip IR3. Concurrent pack imports use distinct temporary files. Pipeline journals are per process.
+
+Three metal2vulkan work placements are on by default. `metal-flow=<bits>` selects them: 1 for the first, 2 for the second, 4 for the third, and 0 for none:
+
+- Render encoder calls lower on the runtime's lowering thread. A refusal found while lowering fails the command buffer.
+- A commit submits on the committing thread when no other submission pass is running.
+- Each program appends its pipeline records to `pipeline-records-<name>.bin` in the cache. A new device makes the recorded pipelines again in the background at the utility class.
+
+Any value of `metal-flow=` logs the `FL` counts to os_log every ten seconds when they change.
+
+Turnip chooses tile memory or system memory for each render pass, and concurrent binning is on. `tu-debug=<flags>` sets `TU_DEBUG` for every Metal process: `gmem` renders every pass in tile memory and `nocb` turns concurrent binning off. `tum=a` alternates between Turnip's choice and tile memory every eight seconds for measurement.
 
 Logical Metal queues share one Vulkan queue and kernel queue per process. The frontend forwards the most urgent **current** request among live queues. Lowering or destroying a queue removes its boost. Getters report each queue's own request; setters report backend acceptance. The kernel chooses foreground or background priority from the task's GPU role. Priority policy does not use process names.
 
@@ -43,6 +53,10 @@ See the [GPU adaptation procedure](/porting/gpu) for staging and board inputs.
 
 Frame diagnostics retain allocation, command, completion and GPU/display timing. Pixel capture is disabled. See [GPU frame diagnostics](/porting/gpu-diagnostics).
 
-`sheng-wallpaper-freeze=1` isolates wallpaper rendering. A Poster renderer retains its first successfully drawn and stored IOSurface output of at least two million pixels, then parks later command buffers before runtime submission. Parked buffers remain committed and unscheduled; their owners and queue leases stay retained. Previously submitted work completes normally. PosterBoard, backboardd and other clients continue submitting. The mode defaults to off.
+With `gpu-trace=1`, kernel event 65 identifies the Metal device and command queue used by `iconservicesagent`. Up to eight `metal-work` records report completion status, draw count and dispatch count for command buffers with GPU work.
+
+`wallpaper-freeze=1` isolates wallpaper rendering. A Poster renderer retains its first successfully drawn and stored IOSurface output of at least two million pixels, then parks later command buffers before runtime submission. Parked buffers remain committed and unscheduled; their owners and queue leases stay retained. Previously submitted work completes normally. PosterBoard, backboardd and other clients continue submitting. The mode defaults to off.
 
 Detailed latency records identify slow encoder calls, callback invoke addresses and resource destruction. Kernel sampling of the render, encode and completion threads correlates upstream waits.
+
+With `diag=1`, encoding batch end records (type 14, phase 3) store encoding-thread CPU microseconds in field `d`. Compare this with paired start/end wall time to distinguish work from waits. `TUC` reports Turnip BO cache lookups, hits, inserts, evictions and full flushes.

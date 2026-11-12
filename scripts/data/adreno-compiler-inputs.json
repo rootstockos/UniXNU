@@ -62,6 +62,12 @@
     "patches/mesa/turnip-gmem-swap-trace.patch",
     "patches/mesa/turnip-thread-render-mode.patch",
     "patches/mesa/turnip-gmem-memory-side-swap.patch",
+    "patches/mesa/turnip-darwin-submit-cuts.patch",
+    "patches/mesa/turnip-render-mode-turns.patch",
+    "patches/mesa/turnip-darwin-keep-device-after-restart.patch",
+  "patches/mesa/ir3-fragment-consts-leave-pipeline-space.patch",
+  "patches/mesa/turnip-shaders-shared-across-pipeline-caches.patch",
+  "patches/mesa/turnip-darwin-sweep-retired-on-cache-miss.patch",
     "patches/mesa/turnip-a810-sysmem-ccu.patch",
     "patches/mesa/turnip-darwin-first-alloc-failure.patch"
   ],

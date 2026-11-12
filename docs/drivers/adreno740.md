@@ -19,7 +19,7 @@ The task's GPU role selects its foreground or background request. Ring 0 takes p
 
 Each ring tracks its queued context and page table. The CP records the executed table after `CP_SMMU_TABLE_UPDATE`, and preemption restores that snapshot. Context switching saves GMEM, runs the performance-counter SRAM postamble and holds the GMU keepalive vote until the incoming WPTR is restored. Read pointers come from each ring's own shadow. Active jobs retain their ring identity when the fence-history table wraps.
 
-The reference enables mode 2 with `sheng-gpu-preempt=2`. Mode 1 sends only low/background requests to ring 1; mode 0 uses one ring. CPU-only page-table switching also uses ring 0. The switch watchdog is 1 s. A failed switch disables further preemption and recovery replays pending work on ring 0; diagnostics retain the failure.
+The reference enables mode 2 with `gpu-preempt=2`. Mode 1 sends only low/background requests to ring 1; mode 0 uses one ring. CPU-only page-table switching also uses ring 0. The switch watchdog is 1 s. A failed switch disables further preemption and recovery replays pending work on ring 0; diagnostics retain the failure.
 
 ## Build and verification
 
@@ -36,3 +36,5 @@ The host scheduling check runs the real ring, preemption and submit code over so
 See [AdrenoMetal](/drivers/adreno-metal) for Metal interfaces, caches and plugin staging.
 
 Frame diagnostics retain allocation, command, completion and GPU/display timing. Pixel capture is disabled. See [GPU frame diagnostics](/porting/gpu-diagnostics).
+
+The hang check captures CP state before recovery and retains it until the next hang. `native_adreno_stall_hang` identifies the snapshot. For faults whose upper address word is zero, `native_adreno_stall_fault` searches the job's IB1s and up to 512 referenced IB2s for the low word and nearby bases followed by zero. These are candidates for inspection, not decoded address operands. A new snapshot clears the previous search.

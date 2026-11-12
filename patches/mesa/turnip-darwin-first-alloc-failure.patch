@@ -1,16 +1,17 @@
 diff --git a/src/freedreno/vulkan/tu_knl_darwin.cc b/src/freedreno/vulkan/tu_knl_darwin.cc
-index f5de114..1168cdd 100644
+index d684250..7973d67 100644
 --- a/src/freedreno/vulkan/tu_knl_darwin.cc
 +++ b/src/freedreno/vulkan/tu_knl_darwin.cc
-@@ -570,6 +570,33 @@ darwin_free_iova(struct tu_device *dev, uint64_t iova, uint64_t size)
-    mtx_unlock(&dev->vma_mutex);
+@@ -587,6 +587,34 @@ darwin_free_iova(struct tu_device *dev, uint64_t iova, uint64_t size)
+    pthread_mutex_unlock(&darwin_process_va_lock);
  }
  
 +/* asteroids: the first failed BO allocation or map of this process as one line of SetMetadata text without an object: the driver copies any
 + * such text to its report line (NativeAdrenoPublish.cpp runCore) before refusing the unknown tag, and the board prints that line when it
 + * changes, every 2 s, so a later line would hide this one. "AF <step> s<KiB> f<flags> k<status> u<MiB in use> h<largest hole MiB>
 + * c<cached MiB> <process>"; steps: r retired BOs (the device was lost), v GPU range, a BoAlloc, m BoMap, p BoCpuMap, i IOConnectMapMemory64 (f is
-+ * the mapped length), H a host import's GPU range (a refused import is the bridge's ordinary fallback, so only the range is noted). */
++ * the mapped length), H a host import's GPU range (a refused import is the bridge's ordinary fallback, so only the range is noted). The
++ * use and hole sizes are the process's GPU address window, which every device of the process shares. */
 +static void
 +darwin_note_failure(struct tu_device *dev, char step, uint64_t size, uint32_t flags, uint32_t status)
 +{
@@ -19,11 +20,11 @@ index f5de114..1168cdd 100644
 +      return;
 +   struct darwin_retire_state *retire = (struct darwin_retire_state *)dev->darwin_retire;
 +   uint64_t used = 0, largest = 0;
-+   mtx_lock(&dev->vma_mutex);
-+   used = retire->va.used;
-+   for (struct rb_node *x = retire->va.size.root; x; x = x->right)   /* the right subtree holds the larger holes */
++   pthread_mutex_lock(&darwin_process_va_lock);
++   used = darwin_process_va.used;
++   for (struct rb_node *x = darwin_process_va.size.root; x; x = x->right)   /* the right subtree holds the larger holes */
 +      largest = rb_node_data(struct darwin_va_hole, x, by_size)->size;
-+   mtx_unlock(&dev->vma_mutex);
++   pthread_mutex_unlock(&darwin_process_va_lock);
 +   NativeAdrenoAbiMetadata req = {};
 +   req.reserved = 0x4641494cu;   /* 'FAIL': no handler, so only the report line keeps it */
 +   int len = snprintf(req.text, sizeof(req.text), "AF %c s%llu f%x k%x u%llu h%llu c%llu %.12s", step, (unsigned long long)(size >> 10),
@@ -36,19 +37,31 @@ index f5de114..1168cdd 100644
  /* Hands the CPU lease, the kernel allocation and the GPU range of a BO back. VK_NOT_READY: the kernel still holds it (retry later);
   * anything else is final (an unexpected kernel status loses the device). Called under retire->lock. */
  static VkResult
-@@ -830,8 +857,10 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
- {
-    MESA_TRACE_FUNC();
-    VkResult collected = darwin_collect_retired(dev);
--   if (collected != VK_SUCCESS)
-+   if (collected != VK_SUCCESS) {
-+      darwin_note_failure(dev, 'r', size, flags, (uint32_t)collected);
-       return collected;
-+   }
- 
-    struct darwin_retire_state *retire = (struct darwin_retire_state *)dev->darwin_retire;
-    /* TU_DARWIN_BO_CACHE=0 turns the cache off (the host checks of the release paths need every free to reach the kernel). */
-@@ -876,8 +905,10 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
+@@ -865,8 +893,10 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
+    bool reused = false;
+    if (!cacheable) {
+       VkResult collected = darwin_collect_retired(dev);
+-      if (collected != VK_SUCCESS)
++      if (collected != VK_SUCCESS) {
++         darwin_note_failure(dev, 'r', size, flags, (uint32_t)collected);
+          return collected;
++      }
+    } else {
+       struct darwin_cached_bo hit;
+       /* The retired BOs are swept (a kernel call for each fence and each release, under the lock every allocating thread
+@@ -886,8 +916,10 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
+          }
+       }
+       pthread_mutex_unlock(&retire->lock);
+-      if (swept != VK_SUCCESS)
++      if (swept != VK_SUCCESS) {
++         darwin_note_failure(dev, 'r', size, flags, (uint32_t)swept);
+          return swept;
++      }
+       if (reused) {
+          handle = hit.handle;
+          alloc_size = hit.size;
+@@ -914,8 +946,10 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
           if (any)
              continue;
        }
@@ -60,7 +73,7 @@ index f5de114..1168cdd 100644
  
        NativeAdrenoAbiBoAlloc alloc = {.bytes = alloc_size, .align_log2 = 12, .contiguous = 0};
        NativeAdrenoAbiBoAllocReply reply = {};
-@@ -893,6 +924,7 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
+@@ -931,6 +965,7 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
              if (any)
                 continue;
           }
@@ -68,7 +81,7 @@ index f5de114..1168cdd 100644
           return vk_errorf(dev, VK_ERROR_OUT_OF_DEVICE_MEMORY, "BoAlloc failed: 0x%x", kr);
        }
  
-@@ -906,6 +938,7 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
+@@ -944,6 +979,7 @@ darwin_bo_init(struct tu_device *dev, struct vk_object_base *base,
        NativeAdrenoAbiBoMapReply mapped = {};
        kr = dw_call(NativeAdrenoMethodBoMap, &map, sizeof(map), &mapped, sizeof(mapped));
        if (kr != KERN_SUCCESS) {
@@ -76,7 +89,7 @@ index f5de114..1168cdd 100644
           return darwin_map_failure(dev, reply.handle, iova, alloc_size, kr, !lazy_vma);
        }
        handle = reply.handle;
-@@ -964,8 +997,10 @@ darwin_bo_init_host(struct tu_device *dev, struct tu_bo **out_bo, void *pointer,
+@@ -1002,8 +1038,10 @@ darwin_bo_init_host(struct tu_device *dev, struct tu_bo **out_bo, void *pointer,
        return collected;
     uint64_t iova;
     VkResult result = darwin_allocate_iova(dev, size, 0, TU_BO_ALLOC_NO_FLAGS, &iova);
@@ -88,7 +101,7 @@ index f5de114..1168cdd 100644
  
     NativeAdrenoAbiBoImport import = {.address = (uint64_t)(uintptr_t)pointer, .bytes = size};
     NativeAdrenoAbiBoAllocReply reply = {};
-@@ -1022,8 +1057,10 @@ darwin_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+@@ -1060,8 +1098,10 @@ darwin_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
     NativeAdrenoAbiBoCpuMap req = {.handle = bo->darwin_handle};
     NativeAdrenoAbiBoCpuMapReply reply = {};
     kern_return_t kr = dw_call(NativeAdrenoMethodBoCpuMap, &req, sizeof(req), &reply, sizeof(reply));
@@ -100,7 +113,7 @@ index f5de114..1168cdd 100644
  
     mach_vm_address_t address = (mach_vm_address_t)(uintptr_t)placed_addr;
     mach_vm_size_t length = 0;
-@@ -1038,6 +1075,7 @@ darwin_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
+@@ -1076,6 +1116,7 @@ darwin_bo_map(struct tu_device *dev, struct tu_bo *bo, void *placed_addr)
     if (kr != KERN_SUCCESS || !address || length < bo->size) {
        NativeAdrenoAbiBoCpuUnmap undo = {.handle = bo->darwin_handle, .token = reply.token};
        dw_call(NativeAdrenoMethodBoCpuUnmap, &undo, sizeof(undo), NULL, 0);
