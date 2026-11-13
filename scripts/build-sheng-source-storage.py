@@ -81,6 +81,10 @@ def main():
         # A clean checkout ships the signed headers in the assembled tree (scripts/policies, copied
         # from the device repository); the full block tables stay a local input of the userdata image.
         shipped = sorted(tree.glob(f'scripts/policies/*{build_id}'))
+        # Two profiles of one build (ipados-27.0.1-24A446 and ios-27.0.1-24A446) both match: the selected profile's own wins.
+        named = tree / 'scripts/policies' / os.environ.get('UNIXNU_OS_PROFILE', '')
+        if len(shipped) > 1 and os.environ.get('UNIXNU_OS_PROFILE') and named.is_dir():
+            shipped = [named]
         if len(shipped) != 1:
             parser.error(f'no policy directory for {build_id}: pass --policy-dir or ship scripts/policies/*{build_id}')
         policies = shipped[0]
@@ -216,8 +220,12 @@ OSDefineOperatorMethods(IOBlockStorageDevice)
         sources.append(device_source('BootWatchdogPolicy.c'))
         # The diagnostic file export (diag-export): the unified log, crash reports and a screenshot, read through the VFS.
         sources.append(device_source('BootDiagExport.c'))
-        sources.append(device_source('WifiFirmware.c'))
-        sources.append(device_source('BluetoothFirmware.c'))
+        # The Wi-Fi and Bluetooth firmware readers of a board that has those drivers (sheng); nothing else calls them, so a
+        # board without them (asteroids) builds without.
+        for name in ('WifiFirmware.c', 'BluetoothFirmware.c'):
+            found = next((directory / name for directory in package_dirs if (directory / name).is_file()), None)
+            if found:
+                sources.append(found)
     latency = next((directory / 'BootLatencyTrace.c' for directory in package_dirs
                     if (directory / 'BootLatencyTrace.c').is_file()), None)
     if latency:

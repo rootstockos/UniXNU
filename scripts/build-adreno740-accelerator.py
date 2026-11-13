@@ -81,9 +81,20 @@ while i < len(args):
     i += 1
     if v in ('-MF', '-MJ'):
         i += 1
+# The source includes the header beside its own checkout ("../AdrenoMetal/", or "../NativeMetal/" in older forks). A device
+# repository's fork links into the tree from elsewhere, where ".." leaves the tree, so a real directory whose parent holds both
+# names (linked to the tree's AdrenoMetal) serves the include when the source's own directory does not.
+header = ROOT / 'drivers/AdrenoMetal/OriginalAcceleratorABI.h'
+shim = OUT / 'include'
+(shim / 'source').mkdir(parents=True, exist_ok=True)
+for name in ('AdrenoMetal', 'NativeMetal'):
+    link = shim / name
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(header.parent.resolve())
 cmd += ['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter', '-Wno-unnecessary-virtual-specifier', '-Wno-c99-designator',
         '-Wno-reorder-init-list', '-Wno-deprecated-enum-enum-conversion', '-Wno-overloaded-virtual',
-        '-I', str(ROOT / '.cache/xnu-work/osfmk')]
+        '-I', str(ROOT / '.cache/xnu-work/osfmk'), '-I', str(shim / 'source')]
 subprocess.run(cmd, cwd=record['directory'], check=True)
 
 raw = obj.read_bytes()
@@ -149,9 +160,8 @@ native = ROOT / 'build/adreno740/libAdreno740.a'
 if native.exists():
     run(['xcrun', 'ar', 'rcs', native, late, *binding_objects])
 (OUT / 'build-report.json').write_text(json.dumps(dict(
-    # The header the source includes (#include "../AdrenoMetal/OriginalAcceleratorABI.h", beside the driver's own checkout).
-    source_sha256={str(source.relative_to(ROOT)): sha(source),
-                   'OriginalAcceleratorABI.h': sha(source.resolve().parent.parent / 'AdrenoMetal/OriginalAcceleratorABI.h')},
+    # The header the source includes (#include "../AdrenoMetal/OriginalAcceleratorABI.h"), the tree's AdrenoMetal copy.
+    source_sha256={str(source.relative_to(ROOT)): sha(source), 'OriginalAcceleratorABI.h': sha(header)},
     archive_sha256=sha(archive), original_abi_sha256=sha(plan_path), bindings={n: hex(a) for n, a in bindings.items()},
     original_instructions_modified=False, runtime_qualified=False), indent=2) + '\n')
 print('PASS: staged AGXAccelerator builds against the audited original IOAcceleratorES imports')
